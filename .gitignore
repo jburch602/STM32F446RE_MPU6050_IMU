@@ -1,0 +1,34 @@
+# Build output folders
+Debug/
+Release/
+
+# Compiled output files
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.su
+*.cyclo
+
+# STM32CubeIDE / Eclipse temporary metadata
+.metadata/
+.settings/
+*.launch
+
+# CMake/build folders if you ever use them
+build/
+cmake-build-*/
+
+# Editor/OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.tmp
+*.orig
