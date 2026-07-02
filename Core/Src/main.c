@@ -1,17 +1,17 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
+  * Programmed by Jackson Burch
+  * Real-time IMU visualizer and system monitor
   ******************************************************************************
-  * @attention
+  * MPU6050 WHO_AM_I
   *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
   *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  *
+  *
+  *
+  *
   *
   ******************************************************************************
   */
@@ -21,7 +21,7 @@
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
-
+#include "mpu6050.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -91,7 +91,9 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+if (MPU6050_Init(&hi2c1) != HAL_OK) {
+	Error_Handler();
+}
   /* USER CODE END 2 */
 
   /* Infinite loop */
