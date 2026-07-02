@@ -11,6 +11,7 @@
 
 #define MPU6050_EXPECTED_ID 0x68
 // The MPU6050 should respond with this after a WHO_AM_I read.
+#define MPU6050_PWR_MGMT_1_REG 0x6B
 
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
@@ -43,7 +44,13 @@ HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c)
     {
         return HAL_ERROR;
     }
+    //Write to reg 0x6B to equal 0x00. This clears the sleep mode bit
+    status = MPU6050_Write_Register(hi2c, MPU6050_PWR_MGMT_1_REG, 0x00);
 
+    if (status != HAL_OK) // If status is not HAL_OK, the I2C/HAL transaction failed
+       {
+           return status; // Return the actual status
+       }
     return HAL_OK;
 }
 
