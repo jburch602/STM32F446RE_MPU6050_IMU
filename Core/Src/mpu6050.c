@@ -12,6 +12,9 @@
 #define MPU6050_EXPECTED_ID 0x68
 // The MPU6050 should respond with this after a WHO_AM_I read.
 #define MPU6050_PWR_MGMT_1_REG 0x6B
+// This is the registry of the sleep/wake state
+#define MPU6050_ACCEL_XOUT_H_REG 0x3B
+// This is the registry of the first accelerometer byte
 
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
@@ -37,21 +40,45 @@ HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c)
 
     if (status != HAL_OK) // If status is not HAL_OK, the I2C/HAL transaction failed
     {
-        return status; // Return the actual status
+        return status; // Return the status
     }
 
     if (who_am_i != MPU6050_EXPECTED_ID) // If who_am_i is not 0x68, unexpected device ID
     {
-        return HAL_ERROR;
+        return HAL_ERROR; //Return HAL_ERROR
     }
     //Write to reg 0x6B to equal 0x00. This clears the sleep mode bit
     status = MPU6050_Write_Register(hi2c, MPU6050_PWR_MGMT_1_REG, 0x00);
 
-    if (status != HAL_OK) // If status is not HAL_OK, the I2C/HAL transaction failed
+    if (status != HAL_OK) // IF status is not HAL_OK, the I2C/HAL transaction failed
        {
-           return status; // Return the actual status
+           return status; // Return the status
        }
-    return HAL_OK;
+    return HAL_OK; // Return HAL_OK, the mpu is awake and has the correct address
+}
+HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel_x, int16_t *accel_y, int16_t *accel_z){ //function returns a HAL status and combines the 6 bytes from the accelerometer into 3 signed 16 bit integers
+
+	if (hi2c == NULL || accel_x == NULL || accel_y == NULL || accel_z == NULL){ //IF any of the needed pointers are NULL
+			return HAL_ERROR; //Return HAL_ERROR
+		}
+	uint8_t data[6]; //unsigned int array data holds 6, 8 bit values
+
+	HAL_StatusTypeDef status = MPU6050_Read_Register(hi2c, MPU6050_ACCEL_XOUT_H_REG, data, 6); //reads the 6 bytes starting at the address of MPU6050_ACCEL_XOUT_H_REG
+
+
+	if (status != HAL_OK) // IF status is not HAL_OK, the I2C/HAL transaction failed
+	    {
+	        return status; // Return the status
+	    }
+
+	//so these line shifts take data from the high byte and shift it left 8 bits "<< 8"
+	//and then combine the low byte by using bitwise OR operator " | "
+	//then it places that 16 bit value in the the value of the pointers address
+	*accel_x = (int16_t)(data[0] << 8 | data[1]);
+	*accel_y = (int16_t)(data[2] << 8 | data[3]);
+	*accel_z = (int16_t)(data[4] << 8 | data[5]);
+
+	return HAL_OK; // Return HAL_OK, does not validate data
 }
 
 // Static helper functions
