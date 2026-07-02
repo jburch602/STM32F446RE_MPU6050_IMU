@@ -91,9 +91,34 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-if (MPU6050_Init(&hi2c1) != HAL_OK) {
-	Error_Handler();
-}
+
+  //TEST CODE SECTION
+  int16_t ax = 0;
+  int16_t ay = 0;
+  int16_t az = 0;
+
+  int16_t gx = 0;
+  int16_t gy = 0;
+  int16_t gz = 0;
+
+  HAL_StatusTypeDef mpu_status;
+  HAL_StatusTypeDef accel_status;
+  HAL_StatusTypeDef gyro_status;
+
+  mpu_status = MPU6050_Init(&hi2c1);
+  if (mpu_status != HAL_OK){
+	  Error_Handler();
+  }
+
+  accel_status = MPU6050_Read_Accel_Raw(&hi2c1, &ax, &ay, &az);
+  gyro_status = MPU6050_Read_Gyro_Raw(&hi2c1, &gx, &gy, &gz);
+
+  if (accel_status != HAL_OK || gyro_status != HAL_OK){
+	  Error_Handler();
+  }
+  _NOP(); //Breakpoint to test status and raw data
+  //END TEST CODE SECTION
+
   /* USER CODE END 2 */
 
   /* Infinite loop */

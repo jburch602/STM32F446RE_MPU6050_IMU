@@ -38,4 +38,7 @@ HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data
 //uses i2c peripheral to read 6 bytes from accelerometer and combine into 3 signed 16 bit integers
 HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel_x, int16_t *accel_y, int16_t *accel_z);
 
+//uses i2c peripheral to read 6 bytes from gyroscope and combine into 3 signed 16 bit integers
+HAL_StatusTypeDef MPU6050_Read_Gyro_Raw(I2C_HandleTypeDef *hi2c, int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z);
+
 #endif /* INC_MPU6050_H */
