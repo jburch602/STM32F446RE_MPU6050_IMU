@@ -125,12 +125,16 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+
+	  //Raw reads must succeed for while loop to continue
 	  accel_status = MPU6050_Read_Accel_Raw(&hi2c1, &ax, &ay, &az); //accel_status is equal to status of function read accel raw
 	  gyro_status = MPU6050_Read_Gyro_Raw(&hi2c1, &gx, &gy, &gz); //gyro_status is equal to status of function read gyro raw
 
 	  if (accel_status != HAL_OK || gyro_status != HAL_OK){ //IF either accel or gyro are not HAL_OK
 	  	  Error_Handler(); //Send to error handler
 	  }
+	  //Convert raw data to physical units
+
 	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
 			  uart_msg, //character array stores the message
 			  sizeof(uart_msg), //maximum byte size of the message 128

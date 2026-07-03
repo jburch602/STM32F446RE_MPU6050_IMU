@@ -41,4 +41,10 @@ HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel
 //uses i2c peripheral to read 6 bytes from gyroscope and combine into 3 signed 16 bit integers
 HAL_StatusTypeDef MPU6050_Read_Gyro_Raw(I2C_HandleTypeDef *hi2c, int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z);
 
+//Uses accel scale factor to convert raw units to physical units
+float MPU6050_Convert_Accel_To_Grav(int16_t raw_accel_data);
+
+//Uses gyro scale factor to convert raw units to physical units
+float MPU6050_Convert_Gyro_To_Deg(int16_t raw_gyro_data);
+
 #endif /* INC_MPU6050_H */

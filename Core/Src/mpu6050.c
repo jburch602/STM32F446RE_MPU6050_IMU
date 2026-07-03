@@ -18,6 +18,12 @@
 #define MPU6050_GYRO_XOUT_H_REG 0x43
 // This is the registry of the first gyroscope byte
 
+//The scale factors are both in their highest sensitivity modes for now
+#define MPU6050_ACCEL_SCALE_FACTOR 16384.0f
+// This is the factor to convert raw accel data to physical units (+/-)2g
+#define MPU6050_GYRO_SCALE_FACTOR 131.0f
+// This is the factor to convert raw gyro data to physical units (+/-)250 degrees per second
+
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
                                                uint8_t reg,
@@ -27,6 +33,8 @@ static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
 static HAL_StatusTypeDef MPU6050_Write_Register(I2C_HandleTypeDef *hi2c,
                                                 uint8_t reg,
                                                 uint8_t data);
+
+//Init and read gyro/accel functions
 
 HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c)
 {
@@ -138,4 +146,16 @@ static HAL_StatusTypeDef MPU6050_Write_Register(I2C_HandleTypeDef *hi2c,
         1,                    // Write one byte
         100                   // Timeout in ms
     );
+}
+
+//Unit conversion with scale factor
+
+//Uses accel scale factor to convert raw units to physical units
+float MPU6050_Convert_Accel_To_Grav(int16_t raw_accel_data){
+	return raw_accel_data / MPU6050_ACCEL_SCALE_FACTOR;
+}
+
+//Uses gyro scale factor to convert raw units to physical units
+float MPU6050_Convert_Gyro_To_Deg(int16_t raw_gyro_data){
+	return raw_gyro_data / MPU6050_GYRO_SCALE_FACTOR;
 }
