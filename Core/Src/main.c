@@ -121,18 +121,18 @@ int main(void)
 	  //Raw reads must succeed for while loop to continue
 	  imu_status = MPU6050_Read_All(&hi2c1, &imu);
 
-
 	  if (imu_status != HAL_OK){ //IF either Read_All is not HAL_OK
 	  	  return imu_status; //Send to error handler
 	  }
-	  //Convert raw data to physical units
 
+	  uint32_t time_ms = HAL_GetTick();
 	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
 			  uart_msg, //character array stores the message
 			  sizeof(uart_msg), //maximum byte size of the message 128
-			  "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
-			  imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
+			  "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
+			  (unsigned long)time_ms, imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
 			  imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps);
+
 	  if (uart_length > 0 && uart_length < sizeof(uart_msg)){
 
 		  HAL_UART_Transmit( //Uses HAL library UART transmit
