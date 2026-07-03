@@ -159,3 +159,31 @@ float MPU6050_Convert_Accel_To_Grav(int16_t raw_accel_data){
 float MPU6050_Convert_Gyro_To_Deg(int16_t raw_gyro_data){
 	return raw_gyro_data / MPU6050_GYRO_SCALE_FACTOR;
 }
+
+//Read all function takes raw reads and converts
+
+HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data){
+	if (hi2c == NULL || data == NULL){ //IF needed pointers are NULL
+		return HAL_ERROR; //Return HAL_Error
+	}
+	HAL_StatusTypeDef status; //Make HAL status for function
+
+	status = MPU6050_Read_Accel_Raw(hi2c, &data->accel_x_raw, &data->accel_y_raw, &data->accel_z_raw); //Reads raw data and stores in struct MPU6050_Data_t
+	if (status != HAL_OK){ //IF status is not ok
+		return status; //Return status
+	}
+	status = MPU6050_Read_Gyro_Raw(hi2c, &data->gyro_x_raw, &data->gyro_y_raw, &data->gyro_z_raw);
+	if (status != HAL_OK){ //IF status is not ok
+			return status; //Return status
+		}
+	//Convert the raw accel data into G units and stores at the address from the struct variables in MPU6050_Data_t
+	data->accel_x_g = MPU6050_Convert_Accel_To_Grav(data->accel_x_raw);
+	data->accel_y_g = MPU6050_Convert_Accel_To_Grav(data->accel_y_raw);
+	data->accel_z_g = MPU6050_Convert_Accel_To_Grav(data->accel_z_raw);
+	//Convert the raw gyro data into DPS units and stores at the address from the struct variables in MPU6050_Data_t
+	data->gyro_x_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_x_raw);
+	data->gyro_y_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_y_raw);
+	data->gyro_z_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_z_raw);
+
+	return HAL_OK; //Return HAL_OK at this step means data was read and converted
+}

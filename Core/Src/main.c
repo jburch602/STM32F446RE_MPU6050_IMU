@@ -93,21 +93,14 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  //TEST CODE SECTION
-  int16_t ax = 0; //Signed 16 bit int
-  int16_t ay = 0; //Signed 16 bit int
-  int16_t az = 0; //Signed 16 bit int
 
-  int16_t gx = 0; //Signed 16 bit int
-  int16_t gy = 0; //Signed 16 bit int
-  int16_t gz = 0; //Signed 16 bit int
+  MPU6050_Data_t imu = {0}; //Initializes the struct
 
   char uart_msg[128]; //Character array of 128 bytes
   int uart_length = 0; //int stores the length in bytes of the message
 
   HAL_StatusTypeDef mpu_status; //status of MPU address/wake
-  HAL_StatusTypeDef accel_status; //status of accel reads
-  HAL_StatusTypeDef gyro_status; //status of gyro reads
+  HAL_StatusTypeDef imu_status; //status of imu reads/conversion
 
   mpu_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and get its status sent to mpu_status
   if (mpu_status != HAL_OK){ //IF mpu_status is not okay
@@ -115,8 +108,7 @@ int main(void)
   }
 
 
-  //_NOP(); //Breakpoint to test status and raw data
-  //END TEST CODE SECTION
+
 
   /* USER CODE END 2 */
 
@@ -127,19 +119,20 @@ int main(void)
     /* USER CODE END WHILE */
 
 	  //Raw reads must succeed for while loop to continue
-	  accel_status = MPU6050_Read_Accel_Raw(&hi2c1, &ax, &ay, &az); //accel_status is equal to status of function read accel raw
-	  gyro_status = MPU6050_Read_Gyro_Raw(&hi2c1, &gx, &gy, &gz); //gyro_status is equal to status of function read gyro raw
+	  imu_status = MPU6050_Read_All(&hi2c1, &imu);
 
-	  if (accel_status != HAL_OK || gyro_status != HAL_OK){ //IF either accel or gyro are not HAL_OK
-	  	  Error_Handler(); //Send to error handler
+
+	  if (imu_status != HAL_OK){ //IF either Read_All is not HAL_OK
+	  	  return imu_status; //Send to error handler
 	  }
 	  //Convert raw data to physical units
 
 	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
 			  uart_msg, //character array stores the message
 			  sizeof(uart_msg), //maximum byte size of the message 128
-			  "%d,%d,%d,%d,%d,%d\r\n", //CSV formatted
-			  ax, ay, az, gx, gy, gz);
+			  "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
+			  imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
+			  imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps);
 	  if (uart_length > 0 && uart_length < sizeof(uart_msg)){
 
 		  HAL_UART_Transmit( //Uses HAL library UART transmit
