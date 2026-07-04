@@ -95,19 +95,23 @@ int main(void)
 
 
   MPU6050_Data_t imu = {0}; //Initializes the struct
+  MPU6050_Bias_t bias = {0};
 
   char uart_msg[128]; //Character array of 128 bytes
   int uart_length = 0; //int stores the length in bytes of the message
 
   HAL_StatusTypeDef mpu_status; //status of MPU address/wake
   HAL_StatusTypeDef imu_status; //status of imu reads/conversion
+  HAL_StatusTypeDef cal_status;
 
   mpu_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and get its status sent to mpu_status
   if (mpu_status != HAL_OK){ //IF mpu_status is not okay
 	  Error_Handler(); //Send to error handler
   }
-
-
+  cal_status = MPU6050_Calibrate_All(&hi2c1, &bias);
+  if (cal_status != HAL_OK){ //IF cal_status is not okay
+  	  Error_Handler(); //Send to error handler
+  }
 
 
   /* USER CODE END 2 */
@@ -119,7 +123,7 @@ int main(void)
     /* USER CODE END WHILE */
 
 	  //Raw reads must succeed for while loop to continue
-	  imu_status = MPU6050_Read_All(&hi2c1, &imu);
+	  imu_status = MPU6050_Read_All(&hi2c1, &imu, &bias);
 
 	  if (imu_status != HAL_OK){ //IF either Read_All is not HAL_OK
 	  	  return imu_status; //Send to error handler

@@ -29,11 +29,24 @@ typedef struct { //struct for the raw input of the MPU6050, combines all reads i
 	float gyro_z_dps;
 } MPU6050_Data_t; //name of struct
 
+typedef struct { //struct for the raw input of the MPU6050, combines all reads into a single typedef
+	int16_t accel_x_bias;
+	int16_t accel_y_bias;
+	int16_t accel_z_bias;
+
+	int16_t gyro_x_bias;
+	int16_t gyro_y_bias;
+	int16_t gyro_z_bias;
+} MPU6050_Bias_t; //name of struct
+
 //Initialize the mpu using the stm32 i2c1 peripheral, Returns HAL_OK or HAL_ERROR etc
 HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c);
 
 //Combines the raw read of gyro/accel functions and uses the Convert functions to get physical units and place in *data struct
-HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data);
+HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, const MPU6050_Bias_t *bias);
+
+//Calibrates raw data
+HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t *bias);
 
 //uses i2c peripheral to read 6 bytes from accelerometer and combine into 3 signed 16 bit integers
 HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel_x, int16_t *accel_y, int16_t *accel_z);

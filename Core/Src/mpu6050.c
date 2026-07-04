@@ -23,6 +23,7 @@
 // This is the factor to convert raw accel data to physical units (+/-)2g
 #define MPU6050_GYRO_SCALE_FACTOR 131.0f
 // This is the factor to convert raw gyro data to physical units (+/-)250 degrees per second
+#define MPU6050_CALIBRATION_SAMPLES 2000
 
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
@@ -160,10 +161,10 @@ float MPU6050_Convert_Gyro_To_Deg(int16_t raw_gyro_data){
 	return raw_gyro_data / MPU6050_GYRO_SCALE_FACTOR;
 }
 
-//Read all function takes raw reads and converts
+//Read all function takes raw reads and converts using calibrated data
 
-HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data){
-	if (hi2c == NULL || data == NULL){ //IF needed pointers are NULL
+HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, const MPU6050_Bias_t *bias){
+	if (hi2c == NULL || data == NULL || bias == NULL){ //IF needed pointers are NULL
 		return HAL_ERROR; //Return HAL_Error
 	}
 	HAL_StatusTypeDef status; //Make HAL status for function
@@ -176,14 +177,149 @@ HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data
 	if (status != HAL_OK){ //IF status is not ok
 			return status; //Return status
 		}
+	//Initialize and calculate the calibrated variables
+	int16_t accel_x_calibrated = data->accel_x_raw - bias->accel_x_bias;
+	int16_t accel_y_calibrated = data->accel_y_raw - bias->accel_y_bias;
+	int16_t accel_z_calibrated = data->accel_z_raw - bias->accel_z_bias;
+
+	int16_t gyro_x_calibrated = data->gyro_x_raw - bias->gyro_x_bias;
+	int16_t gyro_y_calibrated = data->gyro_y_raw - bias->gyro_y_bias;
+	int16_t gyro_z_calibrated = data->gyro_z_raw - bias->gyro_z_bias;
+
 	//Convert the raw accel data into G units and stores at the address from the struct variables in MPU6050_Data_t
-	data->accel_x_g = MPU6050_Convert_Accel_To_Grav(data->accel_x_raw);
-	data->accel_y_g = MPU6050_Convert_Accel_To_Grav(data->accel_y_raw);
-	data->accel_z_g = MPU6050_Convert_Accel_To_Grav(data->accel_z_raw);
+	data->accel_x_g = MPU6050_Convert_Accel_To_Grav(accel_x_calibrated);
+	data->accel_y_g = MPU6050_Convert_Accel_To_Grav(accel_y_calibrated);
+	data->accel_z_g = MPU6050_Convert_Accel_To_Grav(accel_z_calibrated);
 	//Convert the raw gyro data into DPS units and stores at the address from the struct variables in MPU6050_Data_t
-	data->gyro_x_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_x_raw);
-	data->gyro_y_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_y_raw);
-	data->gyro_z_dps = MPU6050_Convert_Gyro_To_Deg(data->gyro_z_raw);
+	data->gyro_x_dps = MPU6050_Convert_Gyro_To_Deg(gyro_x_calibrated);
+	data->gyro_y_dps = MPU6050_Convert_Gyro_To_Deg(gyro_y_calibrated);
+	data->gyro_z_dps = MPU6050_Convert_Gyro_To_Deg(gyro_z_calibrated);
 
 	return HAL_OK; //Return HAL_OK at this step means data was read and converted
 }
+
+//Calibration function calculates the average bias to subtract
+HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t *bias){
+
+	if (hi2c == NULL || bias == NULL)
+	{
+		return HAL_ERROR;
+	}
+
+	uint16_t valid_samples = 0;
+	uint16_t total_samples = 0;
+
+	int16_t ax = 0;
+	int16_t ay = 0;
+	int16_t az = 0;
+
+	int16_t gx = 0;
+	int16_t gy = 0;
+	int16_t gz = 0;
+
+	int64_t accel_x_sum = 0;
+	int64_t accel_y_sum = 0;
+	int64_t accel_z_sum = 0;
+
+	int64_t gyro_x_sum = 0;
+	int64_t gyro_y_sum = 0;
+	int64_t gyro_z_sum = 0;
+
+	while(valid_samples < 2000 && total_samples < 5000){
+
+		HAL_StatusTypeDef status_accel = MPU6050_Read_Accel_Raw(hi2c, &ax, &ay, &az);
+		HAL_StatusTypeDef status_gyro = MPU6050_Read_Gyro_Raw(hi2c, &gx, &gy, &gz);
+
+		total_samples++; //Plus one total sample
+
+		if (status_accel == HAL_OK && status_gyro == HAL_OK){ //IF status is ok
+
+			//Adds raw reads to sum
+			accel_x_sum += ax;
+			accel_y_sum += ay;
+			accel_z_sum += az;
+
+			gyro_x_sum += gx;
+			gyro_y_sum += gy;
+			gyro_z_sum += gz;
+
+			valid_samples++; //Plus one valid sample
+		}
+		HAL_Delay(10); //10ms delay
+	}
+	if(valid_samples == 2000) {
+	    // Divide raw sums by valid samples to calculate average bias
+	    bias->accel_x_bias = (int16_t)(accel_x_sum / valid_samples);
+	    bias->accel_y_bias = (int16_t)(accel_y_sum / valid_samples);
+
+	    // Assumes sensor is flat/still with Z axis reading +1g
+	    bias->accel_z_bias = (int16_t)((accel_z_sum / valid_samples) - MPU6050_ACCEL_SCALE_FACTOR);
+
+	    bias->gyro_x_bias = (int16_t)(gyro_x_sum / valid_samples);
+	    bias->gyro_y_bias = (int16_t)(gyro_y_sum / valid_samples);
+	    bias->gyro_z_bias = (int16_t)(gyro_z_sum / valid_samples);
+	    return HAL_OK; //Collected 2000 valid samples and calculated bias, HAL_OK
+	}
+	else{
+		return HAL_ERROR; //Failed to calibrate, HAL_ERROR
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
