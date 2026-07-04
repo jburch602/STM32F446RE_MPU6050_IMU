@@ -23,10 +23,11 @@
 #include "gpio.h"
 #include "mpu6050.h"
 #include "imu_filter.h"
+#include "telemetry.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -94,36 +95,33 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-
   MPU6050_Data_t mpu = {0}; //Initializes the struct
   MPU6050_Bias_t bias = {0};
   IMU_Angles_t angles = {0};
-
-  char uart_msg[128]; //Character array of 128 bytes
-  int uart_length = 0; //int stores the length in bytes of the message
 
   HAL_StatusTypeDef wake_status; //status of MPU address/wake
   HAL_StatusTypeDef mpu_status; //status of mpu reads/conversion
   HAL_StatusTypeDef imu_status; //status of IMU timing and angle calculations
   HAL_StatusTypeDef cal_status; //status of calibration
+  HAL_StatusTypeDef tel_status; //status of telemetry transmission
 
   wake_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and store wake/init status
   if (wake_status != HAL_OK){ //IF mpu_status is not okay
-	  Error_Handler(); //Send to error handler
+      Error_Handler(); //Send to error handler
   }
+
   cal_status = MPU6050_Calibrate_All(&hi2c1, &bias);
   if (cal_status != HAL_OK){ //IF cal_status is not okay
-  	  Error_Handler(); //Send to error handler
+      Error_Handler(); //Send to error handler
   }
-  const char csv_header[] = "Time_ms,dt,AX_g,AY_g,AZ_g,GX_dps,GY_dps,GZ_dps,Pitch,Roll,Yaw\r\n"; //Header for csv logging
 
-  HAL_UART_Transmit(
-		  &huart2, //Send to UART2
-		  (uint8_t *)csv_header, // Pointer to the first byte of the header
-		  sizeof(csv_header ) - 1, //Sends the size of the array minus the '\0'
-		  HAL_MAX_DELAY);
+  tel_status = Telemetry_Send_Header(&huart2); //Send the header to csv for logging
+  if (tel_status != HAL_OK){
+      Error_Handler();
+  }
 
   int failed_read = 0; //temp system health int
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -151,21 +149,8 @@ int main(void)
 	  else {
 		  failed_read++;
 	  }
-	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
-			  uart_msg, //character array stores the message
-			  sizeof(uart_msg), //maximum byte size of the message 128
-			  "%lu,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
-			  (unsigned long)angles.current_time_ms, angles.dt, mpu.accel_x_g, mpu.accel_y_g, mpu.accel_z_g,
-			  mpu.gyro_x_dps, mpu.gyro_y_dps, mpu.gyro_z_dps, angles.pitch, angles.roll, angles.yaw);
+	  tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles); //Send data to csv for logging
 
-	  if (uart_length > 0 && uart_length < sizeof(uart_msg)){
-
-		  HAL_UART_Transmit( //Uses HAL library UART transmit
-				  &huart2, //Address of UART2
-				  (uint8_t *)uart_msg, // Cast the char buffer pointer to uint8_t* because HAL_UART_Transmit sends byte data
-				  uart_length, //Sends this number of bytes, found in snprintf
-				  100); //timeout
-	  }
 	  HAL_Delay(10); //temporary 10ms delay for testing CSV output
 
     /* USER CODE BEGIN 3 */
