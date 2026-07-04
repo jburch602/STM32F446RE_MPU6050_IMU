@@ -1,5 +1,5 @@
 #include "mpu6050.h"
-
+#include <math.h>
 // Defines
 
 #define MPU6050_ADDR (0x68 << 1)
@@ -24,6 +24,9 @@
 #define MPU6050_GYRO_SCALE_FACTOR 131.0f
 // This is the factor to convert raw gyro data to physical units (+/-)250 degrees per second
 #define MPU6050_CALIBRATION_SAMPLES 2000
+
+#define MPU6050_PI 3.1415927f //6-7 decimal float precision of PI
+#define MPU6050_RAD_TO_DEG (180.0f / MPU6050_PI) //The conversion of radians to degrees is 180/pi
 
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
@@ -264,8 +267,61 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 		return HAL_ERROR; //Failed to calibrate, HAL_ERROR
 	}
 }
+HAL_StatusTypeDef MPU6050_Calculate_Angles(MPU6050_Data_t *data, MPU6050_Angles_t *angles){
 
+	if(data == NULL){ //IF data is equal NULL
+		return HAL_ERROR; //Return HAL_ERROR, invalid pointer
+	}
+	//function scoped unfiltered pitch and roll
+	float accel_pitch;
+	float accel_roll;
 
+	//Inverse tangent of y over the square root of x^2 + z^2 gives us pitch, atan2f produces quadrant aware data
+	accel_pitch = atan2f(data->accel_y_g, sqrtf((data->accel_x_g * data->accel_x_g) + (data->accel_z_g * data->accel_z_g))) * MPU6050_RAD_TO_DEG;
+	accel_roll = atan2f(data->accel_x_g, data->accel_z_g) * MPU6050_RAD_TO_DEG;
+
+	angles->pitch = 0.98f * (angles->pitch + data->gyro_x_dps * angles->dt) + 0.02f * accel_pitch;
+	angles->roll = 0.98f * (-angles->roll + data->gyro_y_dps * angles->dt) + 0.02f * accel_roll;
+	angles->yaw += data->gyro_z_dps *angles->dt;
+
+	return HAL_OK;
+}
+HAL_StatusTypeDef MPU6050_Update_dt(MPU6050_Angles_t *angles){
+	if(angles == NULL){ //IF angles pointer is null
+		return HAL_ERROR; // Return HAL_ERROR
+	}
+
+	angles->current_time_ms = HAL_GetTick();
+
+	if (angles->previous_time_ms == 0){ //IF the last recorded time was 0, its on startup
+		angles->dt = 0.0f; //Delta of time is 0
+	}
+	else { //ELSE
+		angles->dt = (angles->current_time_ms-angles->previous_time_ms) / 1000.0f; //Converts delta time in milliseconds to seconds
+	}
+	angles->previous_time_ms = angles->current_time_ms; //The current is now previous!
+
+	return HAL_OK; //Return HAL_OK
+}
+HAL_StatusTypeDef MPU6050_Update_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, MPU6050_Bias_t *bias, MPU6050_Angles_t *angles){
+
+	if (data == NULL || bias == NULL || angles == NULL){ //IF needed pointers are NULL
+		return HAL_ERROR;
+	}
+	HAL_StatusTypeDef status = MPU6050_Read_All(hi2c, data, bias);
+	if(status != HAL_OK){
+			return status;
+		}
+	status = MPU6050_Update_dt(angles);
+	if(status != HAL_OK){
+			return status;
+		}
+	status = MPU6050_Calculate_Angles(data, angles);
+	if(status != HAL_OK){
+		return status;
+	}
+	return HAL_OK;
+}
 
 
 

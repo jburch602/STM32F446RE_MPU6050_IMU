@@ -96,13 +96,14 @@ int main(void)
 
   MPU6050_Data_t imu = {0}; //Initializes the struct
   MPU6050_Bias_t bias = {0};
+  MPU6050_Angles_t angles = {0};
 
   char uart_msg[128]; //Character array of 128 bytes
   int uart_length = 0; //int stores the length in bytes of the message
 
   HAL_StatusTypeDef mpu_status; //status of MPU address/wake
   HAL_StatusTypeDef imu_status; //status of imu reads/conversion
-  HAL_StatusTypeDef cal_status;
+  HAL_StatusTypeDef cal_status; //status of calibration
 
   mpu_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and get its status sent to mpu_status
   if (mpu_status != HAL_OK){ //IF mpu_status is not okay
@@ -112,7 +113,13 @@ int main(void)
   if (cal_status != HAL_OK){ //IF cal_status is not okay
   	  Error_Handler(); //Send to error handler
   }
+  const char csv_header[] = "Time_ms,dt,AX_g,AY_g,AZ_g,GX_dps,GY_dps,GZ_dps,Pitch,Roll,Yaw\r\n"; //Header for csv logging
 
+  HAL_UART_Transmit(
+		  &huart2, //Send to UART2
+		  (uint8_t *)csv_header, // Pointer to the first byte of the header
+		  sizeof(csv_header ) - 1, //Sends the size of the array minus the '\0'
+		  HAL_MAX_DELAY);
 
   /* USER CODE END 2 */
 
@@ -122,20 +129,19 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
-	  //Raw reads must succeed for while loop to continue
-	  imu_status = MPU6050_Read_All(&hi2c1, &imu, &bias);
+	  //Calculations must succeed for loop to continue
+	  imu_status = MPU6050_Update_All(&hi2c1, &imu, &bias, &angles);
 
 	  if (imu_status != HAL_OK){ //IF either Read_All is not HAL_OK
-	  	  return imu_status; //Send to error handler
+	  	  Error_Handler(); //Send to error handler
 	  }
 
-	  uint32_t time_ms = HAL_GetTick();
 	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
 			  uart_msg, //character array stores the message
 			  sizeof(uart_msg), //maximum byte size of the message 128
-			  "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
-			  (unsigned long)time_ms, imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
-			  imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps);
+			  "%lu,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
+			  (unsigned long)angles.current_time_ms, angles.dt, imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
+			  imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps, angles.pitch, angles.roll, angles.yaw);
 
 	  if (uart_length > 0 && uart_length < sizeof(uart_msg)){
 
@@ -145,7 +151,7 @@ int main(void)
 				  uart_length, //Sends this number of bytes, found in snprintf
 				  100); //timeout
 	  }
-	  HAL_Delay(100); //temporary 10ms delay for testing CSV output
+	  HAL_Delay(10); //temporary 10ms delay for testing CSV output
 
     /* USER CODE BEGIN 3 */
   }
