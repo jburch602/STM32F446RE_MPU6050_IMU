@@ -25,8 +25,6 @@
 // This is the factor to convert raw gyro data to physical units (+/-)250 degrees per second
 #define MPU6050_CALIBRATION_SAMPLES 2000
 
-#define MPU6050_PI 3.1415927f //6-7 decimal float precision of PI
-#define MPU6050_RAD_TO_DEG (180.0f / MPU6050_PI) //The conversion of radians to degrees is 180/pi
 
 // Static function prototypes
 static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
@@ -92,7 +90,7 @@ HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel
 	*accel_y = (int16_t)(data[2] << 8 | data[3]);
 	*accel_z = (int16_t)(data[4] << 8 | data[5]);
 
-	return HAL_OK; // Return HAL_OK, does not validate data
+	return HAL_OK; // Return HAL_OK, successful I2C read and raw value collection
 }
 HAL_StatusTypeDef MPU6050_Read_Gyro_Raw(I2C_HandleTypeDef *hi2c, int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z){ //function returns a HAL status and combines the 6 bytes from the gyroscope into 3 signed 16 bit integers
 
@@ -228,7 +226,7 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 	int64_t gyro_y_sum = 0;
 	int64_t gyro_z_sum = 0;
 
-	while(valid_samples < 2000 && total_samples < 5000){
+	while(valid_samples < 2000 && total_samples < 5000){ //WHILE stops after 2000 valid samples or 5000 total samples
 
 		HAL_StatusTypeDef status_accel = MPU6050_Read_Accel_Raw(hi2c, &ax, &ay, &az);
 		HAL_StatusTypeDef status_gyro = MPU6050_Read_Gyro_Raw(hi2c, &gx, &gy, &gz);
@@ -250,7 +248,7 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 		}
 		HAL_Delay(10); //10ms delay
 	}
-	if(valid_samples == 2000) {
+	if(valid_samples >= 2000) {
 	    // Divide raw sums by valid samples to calculate average bias
 	    bias->accel_x_bias = (int16_t)(accel_x_sum / valid_samples);
 	    bias->accel_y_bias = (int16_t)(accel_y_sum / valid_samples);
@@ -261,121 +259,10 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 	    bias->gyro_x_bias = (int16_t)(gyro_x_sum / valid_samples);
 	    bias->gyro_y_bias = (int16_t)(gyro_y_sum / valid_samples);
 	    bias->gyro_z_bias = (int16_t)(gyro_z_sum / valid_samples);
+
 	    return HAL_OK; //Collected 2000 valid samples and calculated bias, HAL_OK
 	}
 	else{
 		return HAL_ERROR; //Failed to calibrate, HAL_ERROR
 	}
 }
-HAL_StatusTypeDef MPU6050_Calculate_Angles(MPU6050_Data_t *data, MPU6050_Angles_t *angles){
-
-	if(data == NULL){ //IF data is equal NULL
-		return HAL_ERROR; //Return HAL_ERROR, invalid pointer
-	}
-	//function scoped unfiltered pitch and roll
-	float accel_pitch;
-	float accel_roll;
-
-	//Inverse tangent of y over the square root of x^2 + z^2 gives us pitch, atan2f produces quadrant aware data
-	accel_pitch = atan2f(data->accel_y_g, sqrtf((data->accel_x_g * data->accel_x_g) + (data->accel_z_g * data->accel_z_g))) * MPU6050_RAD_TO_DEG;
-	accel_roll = atan2f(data->accel_x_g, data->accel_z_g) * MPU6050_RAD_TO_DEG;
-
-	angles->pitch = 0.98f * (angles->pitch + data->gyro_x_dps * angles->dt) + 0.02f * accel_pitch;
-	angles->roll = 0.98f * (-angles->roll + data->gyro_y_dps * angles->dt) + 0.02f * accel_roll;
-	angles->yaw += data->gyro_z_dps *angles->dt;
-
-	return HAL_OK;
-}
-HAL_StatusTypeDef MPU6050_Update_dt(MPU6050_Angles_t *angles){
-	if(angles == NULL){ //IF angles pointer is null
-		return HAL_ERROR; // Return HAL_ERROR
-	}
-
-	angles->current_time_ms = HAL_GetTick();
-
-	if (angles->previous_time_ms == 0){ //IF the last recorded time was 0, its on startup
-		angles->dt = 0.0f; //Delta of time is 0
-	}
-	else { //ELSE
-		angles->dt = (angles->current_time_ms-angles->previous_time_ms) / 1000.0f; //Converts delta time in milliseconds to seconds
-	}
-	angles->previous_time_ms = angles->current_time_ms; //The current is now previous!
-
-	return HAL_OK; //Return HAL_OK
-}
-HAL_StatusTypeDef MPU6050_Update_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, MPU6050_Bias_t *bias, MPU6050_Angles_t *angles){
-
-	if (data == NULL || bias == NULL || angles == NULL){ //IF needed pointers are NULL
-		return HAL_ERROR;
-	}
-	HAL_StatusTypeDef status = MPU6050_Read_All(hi2c, data, bias);
-	if(status != HAL_OK){
-			return status;
-		}
-	status = MPU6050_Update_dt(angles);
-	if(status != HAL_OK){
-			return status;
-		}
-	status = MPU6050_Calculate_Angles(data, angles);
-	if(status != HAL_OK){
-		return status;
-	}
-	return HAL_OK;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

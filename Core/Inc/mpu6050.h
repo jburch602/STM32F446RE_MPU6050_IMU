@@ -43,23 +43,12 @@ typedef struct { //struct for the calibration bias of the MPU6050
 
 } MPU6050_Bias_t; //name of struct
 
-typedef struct {
 
-	float pitch;
-	float roll;
-	float yaw;
-
-	uint32_t current_time_ms;
-	uint32_t previous_time_ms;
-	float dt;
-
-} MPU6050_Angles_t; //name of struct
 
 //Initialize the mpu using the stm32 i2c1 peripheral, Returns HAL_OK or HAL_ERROR etc
 HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c);
 
-//Update all function combines all drivers
-HAL_StatusTypeDef MPU6050_Update_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, MPU6050_Bias_t *bias, MPU6050_Angles_t *angles);
+
 
 //Combines the raw read of gyro/accel functions, subtracts bias, and uses the Convert functions to get physical units and place in *data struct
 HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, const MPU6050_Bias_t *bias);
@@ -67,11 +56,7 @@ HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data
 //Calibrates raw data
 HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t *bias);
 
-//Calculates dt
-HAL_StatusTypeDef MPU6050_Update_dt(MPU6050_Angles_t *angles);
 
-//Calculates angles pitch, roll, yaw
-HAL_StatusTypeDef MPU6050_Calculate_Angles(MPU6050_Data_t *data, MPU6050_Angles_t *angles);
 
 //uses i2c peripheral to read 6 bytes from accelerometer and combine into 3 signed 16 bit integers
 HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel_x, int16_t *accel_y, int16_t *accel_z);

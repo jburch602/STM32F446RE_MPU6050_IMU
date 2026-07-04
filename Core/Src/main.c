@@ -22,6 +22,7 @@
 #include "usart.h"
 #include "gpio.h"
 #include "mpu6050.h"
+#include "imu_filter.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -94,19 +95,20 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 
-  MPU6050_Data_t imu = {0}; //Initializes the struct
+  MPU6050_Data_t mpu = {0}; //Initializes the struct
   MPU6050_Bias_t bias = {0};
-  MPU6050_Angles_t angles = {0};
+  IMU_Angles_t angles = {0};
 
   char uart_msg[128]; //Character array of 128 bytes
   int uart_length = 0; //int stores the length in bytes of the message
 
-  HAL_StatusTypeDef mpu_status; //status of MPU address/wake
-  HAL_StatusTypeDef imu_status; //status of imu reads/conversion
+  HAL_StatusTypeDef wake_status; //status of MPU address/wake
+  HAL_StatusTypeDef mpu_status; //status of mpu reads/conversion
+  HAL_StatusTypeDef imu_status; //status of IMU timing and angle calculations
   HAL_StatusTypeDef cal_status; //status of calibration
 
-  mpu_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and get its status sent to mpu_status
-  if (mpu_status != HAL_OK){ //IF mpu_status is not okay
+  wake_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and store wake/init status
+  if (wake_status != HAL_OK){ //IF mpu_status is not okay
 	  Error_Handler(); //Send to error handler
   }
   cal_status = MPU6050_Calibrate_All(&hi2c1, &bias);
@@ -121,6 +123,7 @@ int main(void)
 		  sizeof(csv_header ) - 1, //Sends the size of the array minus the '\0'
 		  HAL_MAX_DELAY);
 
+  int failed_read = 0; //temp system health int
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -129,19 +132,31 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
-	  //Calculations must succeed for loop to continue
-	  imu_status = MPU6050_Update_All(&hi2c1, &imu, &bias, &angles);
+	  //Gets raw values from mpu, subtracts bias, and converts to physical units
+	  mpu_status = MPU6050_Read_All(&hi2c1, &mpu, &bias);
 
-	  if (imu_status != HAL_OK){ //IF either Read_All is not HAL_OK
-	  	  Error_Handler(); //Send to error handler
+	  if (mpu_status == HAL_OK){ //IF mpu is ok
+
+		  //Gets delta time through HAL_GetTick()
+		  imu_status = IMU_Update_dt(&angles);
+		  	  if (imu_status == HAL_OK){ //IF imu is ok
+
+		  		  //Calculates pitch, roll, and yaw
+		  		  imu_status = IMU_Calculate_Angles(&mpu, &angles);
+		  	  }
+		  	  else {
+		  		  failed_read++;
+		  	  }
 	  }
-
+	  else {
+		  failed_read++;
+	  }
 	  uart_length = snprintf( //uart_length is a integer that counts the number of bytes in the message
 			  uart_msg, //character array stores the message
 			  sizeof(uart_msg), //maximum byte size of the message 128
 			  "%lu,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\r\n", //CSV formatted
-			  (unsigned long)angles.current_time_ms, angles.dt, imu.accel_x_g, imu.accel_y_g, imu.accel_z_g,
-			  imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps, angles.pitch, angles.roll, angles.yaw);
+			  (unsigned long)angles.current_time_ms, angles.dt, mpu.accel_x_g, mpu.accel_y_g, mpu.accel_z_g,
+			  mpu.gyro_x_dps, mpu.gyro_y_dps, mpu.gyro_z_dps, angles.pitch, angles.roll, angles.yaw);
 
 	  if (uart_length > 0 && uart_length < sizeof(uart_msg)){
 
@@ -157,7 +172,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
