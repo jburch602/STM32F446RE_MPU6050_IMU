@@ -29,6 +29,7 @@
 #include "imu_filter.h"
 #include "telemetry.h"
 #include "system_health.h"
+#include "i2c_manager.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,7 +93,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+
+  I2C_Manager_RecoverI2C1Bus(); //Attempts to recover I2C bus by pulsing SCL up to 9 times
+
   MX_I2C1_Init();
+
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -108,6 +113,8 @@ int main(void)
 
   System_Health_t health = {0}; //struct
   SystemHealth_Init(&health); //Initializes system health monitor
+
+  Telemetry_Send_Status(&huart2, "===== BOOT START =====", HAL_OK, &health); //system start msg, ignore any leftover data from serial COM before this
 
   wake_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and store wake/init status
   if (wake_status != HAL_OK){ //IF mpu_status is not okay
