@@ -111,17 +111,33 @@ int main(void)
 
   wake_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and store wake/init status
   if (wake_status != HAL_OK){ //IF mpu_status is not okay
+
+	  SystemHealth_SetState(&health, SYS_FAULT);
+	  Telemetry_Send_Status(&huart2, "The MPU failed to initialize", wake_status, &health);
+
       Error_Handler(); //Send to error handler
   }
 
   SystemHealth_SetState(&health, SYS_CALIBRATING);
+  Telemetry_Send_Status(&huart2, "The system is calibrating, keep it still", HAL_OK, &health);
+
   cal_status = MPU6050_Calibrate_All(&hi2c1, &bias);
   if (cal_status != HAL_OK){ //IF cal_status is not okay
+
+	  SystemHealth_SetState(&health, SYS_FAULT);
+	  Telemetry_Send_Status(&huart2, "The calibration failed", cal_status, &health);
+
       Error_Handler(); //Send to error handler
   }
+  SystemHealth_SetState(&health, SYS_RUNNING);
+  Telemetry_Send_Status(&huart2, "Calibration complete", HAL_OK, &health);
 
   tel_status = Telemetry_Send_Header(&huart2); //Send the header to csv for logging
   if (tel_status != HAL_OK){
+
+	  SystemHealth_SetState(&health, SYS_FAULT);
+	  Telemetry_Send_Status(&huart2, "The csv header failed to send", tel_status, &health);
+
       Error_Handler();
   }
 
@@ -164,18 +180,15 @@ int main(void)
           SystemHealth_RecordReadError(&health, mpu_status); //Record read error, sends the hal code
       }
 
-      //Updates calculated error-rate fields
+      //Updates total and read error rates, does not include telemetry errors
       SystemHealth_UpdateErrorRates(&health);
 
       //Send data to csv for logging
-      tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles);
+      tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles, &health);
 
       if (tel_status != HAL_OK) { //IF telemetry is not HAL_OK
           SystemHealth_RecordTelemetryError(&health, tel_status); //Record telemetry error, sends the hal code
       }
-      //Updates total and read error rates, does not include telemetry errors
-      SystemHealth_UpdateErrorRates(&health);
-
       HAL_Delay(10); //temporary 10ms delay for testing CSV output
 
       /* USER CODE BEGIN 3 */
