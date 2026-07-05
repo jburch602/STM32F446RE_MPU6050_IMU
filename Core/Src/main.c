@@ -21,13 +21,14 @@
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
-#include "mpu6050.h"
-#include "imu_filter.h"
-#include "telemetry.h"
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "mpu6050.h"
+#include "imu_filter.h"
+#include "telemetry.h"
+#include "system_health.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -105,11 +106,15 @@ int main(void)
   HAL_StatusTypeDef cal_status; //status of calibration
   HAL_StatusTypeDef tel_status; //status of telemetry transmission
 
+  System_Health_t health = {0}; //struct
+  SystemHealth_Init(&health); //Initializes system health monitor
+
   wake_status = MPU6050_Init(&hi2c1); //Call MPU6050_Init and store wake/init status
   if (wake_status != HAL_OK){ //IF mpu_status is not okay
       Error_Handler(); //Send to error handler
   }
 
+  SystemHealth_SetState(&health, SYS_CALIBRATING);
   cal_status = MPU6050_Calibrate_All(&hi2c1, &bias);
   if (cal_status != HAL_OK){ //IF cal_status is not okay
       Error_Handler(); //Send to error handler
@@ -120,40 +125,60 @@ int main(void)
       Error_Handler();
   }
 
-  int failed_read = 0; //temp system health int
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+      /* USER CODE END WHILE */
 
-	  //Gets raw values from mpu, subtracts bias, and converts to physical units
-	  mpu_status = MPU6050_Read_All(&hi2c1, &mpu, &bias);
+      //Counts one attempted sample cycle
+      SystemHealth_RecordSample(&health);
 
-	  if (mpu_status == HAL_OK){ //IF mpu is ok
+      //Gets raw values from mpu, subtracts bias, and converts to physical units
+      mpu_status = MPU6050_Read_All(&hi2c1, &mpu, &bias);
 
-		  //Gets delta time through HAL_GetTick()
-		  imu_status = IMU_Update_dt(&angles);
-		  	  if (imu_status == HAL_OK){ //IF imu is ok
+      if (mpu_status == HAL_OK) { //IF mpu is ok
 
-		  		  //Calculates pitch, roll, and yaw
-		  		  imu_status = IMU_Calculate_Angles(&mpu, &angles);
-		  	  }
-		  	  else {
-		  		  failed_read++;
-		  	  }
-	  }
-	  else {
-		  failed_read++;
-	  }
-	  tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles); //Send data to csv for logging
+          //Gets delta time through HAL_GetTick()
+          imu_status = IMU_Update_dt(&angles);
 
-	  HAL_Delay(10); //temporary 10ms delay for testing CSV output
+          if (imu_status == HAL_OK) { //IF imu is ok
 
-    /* USER CODE BEGIN 3 */
+              //Calculates pitch, roll, and yaw
+              imu_status = IMU_Calculate_Angles(&mpu, &angles);
+
+              if (imu_status == HAL_OK) { //IF imu is ok
+                  SystemHealth_RecordValidSample(&health); //Record full valid sample
+              }
+              else { //ELSE
+                  SystemHealth_RecordAngleError(&health, imu_status); //Record angle error, sends the hal code
+              }
+          }
+          else { //ELSE
+              SystemHealth_RecordDtError(&health, imu_status); //Record dt error, sends the hal code
+          }
+      }
+      else { //ELSE
+          SystemHealth_RecordReadError(&health, mpu_status); //Record read error, sends the hal code
+      }
+
+      //Updates calculated error-rate fields
+      SystemHealth_UpdateErrorRates(&health);
+
+      //Send data to csv for logging
+      tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles);
+
+      if (tel_status != HAL_OK) { //IF telemetry is not HAL_OK
+          SystemHealth_RecordTelemetryError(&health, tel_status); //Record telemetry error, sends the hal code
+      }
+      //Updates total and read error rates, does not include telemetry errors
+      SystemHealth_UpdateErrorRates(&health);
+
+      HAL_Delay(10); //temporary 10ms delay for testing CSV output
+
+      /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }

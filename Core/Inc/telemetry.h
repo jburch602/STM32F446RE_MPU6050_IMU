@@ -6,7 +6,7 @@
  */
 
 #ifndef TELEMETRY_H
-#define SYSTEM_HEALTH_H
+#define TELEMETRY_H
 
 #include "stm32f4xx_hal.h"
 #include "mpu6050.h"
