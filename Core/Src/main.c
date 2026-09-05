@@ -20,6 +20,7 @@
 #include "main.h"
 #include "adc.h"
 #include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -96,6 +97,7 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
 
   MPU6050_Data_t mpu = {0}; //Initializes the struct
