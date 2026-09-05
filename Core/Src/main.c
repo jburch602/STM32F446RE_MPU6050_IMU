@@ -18,10 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
-
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -93,12 +93,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-
-  I2C_Manager_RecoverI2C1Bus(); //Attempts to recover I2C bus by pulsing SCL up to 9 times
-
   MX_I2C1_Init();
-
   MX_USART2_UART_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   MPU6050_Data_t mpu = {0}; //Initializes the struct
@@ -154,54 +151,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-      //Counts one attempted sample cycle
-      SystemHealth_RecordSample(&health);
-
-      //Gets raw values from mpu, subtracts bias, and converts to physical units
-      mpu_status = MPU6050_Read_All(&hi2c1, &mpu, &bias);
-
-      if (mpu_status == HAL_OK) { //IF mpu is ok
-
-          //Gets delta time through HAL_GetTick()
-          imu_status = IMU_Update_dt(&angles);
-
-          if (imu_status == HAL_OK) { //IF imu is ok
-
-              //Calculates pitch, roll, and yaw
-              imu_status = IMU_Calculate_Angles(&mpu, &angles);
-
-              if (imu_status == HAL_OK) { //IF imu is ok
-                  SystemHealth_RecordValidSample(&health); //Record full valid sample
-              }
-              else { //ELSE
-                  SystemHealth_RecordAngleError(&health, imu_status); //Record angle error, sends the hal code
-              }
-          }
-          else { //ELSE
-              SystemHealth_RecordDtError(&health, imu_status); //Record dt error, sends the hal code
-          }
-      }
-      else { //ELSE
-          SystemHealth_RecordReadError(&health, mpu_status); //Record read error, sends the hal code
-      }
-
-      //Updates total and read error rates, does not include telemetry errors
-      SystemHealth_UpdateErrorRates(&health);
-
-      //Send data to csv for logging
-      tel_status = Telemetry_Send_CSV(&huart2, &mpu, &angles, &health);
-
-      if (tel_status != HAL_OK) { //IF telemetry is not HAL_OK
-          SystemHealth_RecordTelemetryError(&health, tel_status); //Record telemetry error, sends the hal code
-      }
-      HAL_Delay(10); //temporary 10ms delay for testing CSV output
-
-      /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
