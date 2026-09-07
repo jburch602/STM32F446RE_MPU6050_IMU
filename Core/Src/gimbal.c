@@ -9,8 +9,7 @@
 
 
 /*
- * Limits a requested gimbal angle to the
- * configured mechanical range.
+ * Clamps a gimbal command to the configured range.
  */
 static float Gimbal_ClampAngle(float angle_deg)
 {
@@ -43,8 +42,10 @@ static float Gimbal_ApplyDeadband(
 
     return error_deg;
 }
+
+
 /*
- * Limits how quickly a command can change.
+ * Limits the rate of command change.
  */
 static float Gimbal_ApplySlewRate(
         float current_command_deg,
@@ -78,9 +79,29 @@ static float Gimbal_ApplySlewRate(
             command_change_deg;
 }
 
+
 /*
- * Initializes both gimbal servos, applies their
- * calibrated ranges, and starts PWM at mechanical center.
+ * Updates the integral state.
+ */
+static float Gimbal_UpdateIntegral(
+        float integral_deg_s,
+        float error_deg,
+        float ki,
+        float dt)
+{
+    /* Disable integral state when Ki is zero */
+    if (ki <= 0.0f || dt <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return integral_deg_s +
+            (error_deg * dt);
+}
+
+
+/*
+ * Initializes both gimbal axes.
  */
 HAL_StatusTypeDef Gimbal_Init(
         Gimbal_t *gimbal,
@@ -99,7 +120,7 @@ HAL_StatusTypeDef Gimbal_Init(
     HAL_StatusTypeDef status;
 
 
-    /* Initialize pitch servo object */
+    /* Initialize pitch servo */
     status = Servo_Init(
             &gimbal->pitch_servo,
             pitch_htim,
@@ -111,7 +132,8 @@ HAL_StatusTypeDef Gimbal_Init(
         return status;
     }
 
-    /* Apply calibrated pitch servo range */
+
+    /* Apply pitch servo calibration */
     gimbal->pitch_servo.pulse_min_us =
             GIMBAL_PITCH_MIN_US;
 
@@ -122,7 +144,7 @@ HAL_StatusTypeDef Gimbal_Init(
             GIMBAL_PITCH_MAX_US;
 
 
-    /* Initialize roll servo object */
+    /* Initialize roll servo */
     status = Servo_Init(
             &gimbal->roll_servo,
             roll_htim,
@@ -134,7 +156,8 @@ HAL_StatusTypeDef Gimbal_Init(
         return status;
     }
 
-    /* Apply calibrated roll servo range */
+
+    /* Apply roll servo calibration */
     gimbal->roll_servo.pulse_min_us =
             GIMBAL_ROLL_MIN_US;
 
@@ -145,10 +168,7 @@ HAL_StatusTypeDef Gimbal_Init(
             GIMBAL_ROLL_MAX_US;
 
 
-    /*
-     * Start PWM at the actual calibrated centers.
-     * This prevents movement to the generic servo center first.
-     */
+    /* Start pitch servo at center */
     status = Servo_Start(
             &gimbal->pitch_servo,
             GIMBAL_PITCH_CENTER_US
@@ -159,6 +179,8 @@ HAL_StatusTypeDef Gimbal_Init(
         return status;
     }
 
+
+    /* Start roll servo at center */
     status = Servo_Start(
             &gimbal->roll_servo,
             GIMBAL_ROLL_CENTER_US
@@ -168,22 +190,31 @@ HAL_StatusTypeDef Gimbal_Init(
     {
         return status;
     }
+
+
+    /* Initialize controller state */
     gimbal->pitch_error_deg = 0.0f;
     gimbal->roll_error_deg = 0.0f;
 
-    gimbal->pitch_target_command_deg = 0.0f;
-    gimbal->roll_target_command_deg = 0.0f;
+    gimbal->pitch_integral_deg_s = 0.0f;
+    gimbal->roll_integral_deg_s = 0.0f;
+
+    gimbal->pitch_p_term_deg = 0.0f;
+    gimbal->roll_p_term_deg = 0.0f;
+
+    gimbal->pitch_i_term_deg = 0.0f;
+    gimbal->roll_i_term_deg = 0.0f;
 
     gimbal->pitch_command_deg = 0.0f;
     gimbal->roll_command_deg = 0.0f;
+
 
     return HAL_OK;
 }
 
 
 /*
- * Moves both gimbal axes to their calibrated
- * mechanical center positions.
+ * Centers both gimbal axes.
  */
 HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
 {
@@ -219,19 +250,29 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
     }
 
 
+    /* Reset controller state */
+    gimbal->pitch_error_deg = 0.0f;
+    gimbal->roll_error_deg = 0.0f;
+
+    gimbal->pitch_integral_deg_s = 0.0f;
+    gimbal->roll_integral_deg_s = 0.0f;
+
+    gimbal->pitch_p_term_deg = 0.0f;
+    gimbal->roll_p_term_deg = 0.0f;
+
+    gimbal->pitch_i_term_deg = 0.0f;
+    gimbal->roll_i_term_deg = 0.0f;
+
+    gimbal->pitch_command_deg = 0.0f;
+    gimbal->roll_command_deg = 0.0f;
+
+
     return HAL_OK;
 }
 
 
 /*
- * Updates both gimbal axes using the filtered
- * physical pitch and roll angles.
- *
- * Current controller:
- *   Proportional control
- *   Deadband around level
- *   Slew rate limiting
- *   +/-30 degree mechanical limit
+ * Updates pitch and roll gimbal commands.
  */
 HAL_StatusTypeDef Gimbal_Update(
         Gimbal_t *gimbal,
@@ -244,10 +285,11 @@ HAL_StatusTypeDef Gimbal_Update(
 
     HAL_StatusTypeDef status;
 
-    /*
-     * Control error = target - measured.
-     * Target orientation is level at 0 degrees.
-     */
+    float pitch_target_command_deg;
+    float roll_target_command_deg;
+
+
+    /* Calculate control error */
     gimbal->pitch_error_deg =
             0.0f - angles->pitch;
 
@@ -255,54 +297,91 @@ HAL_StatusTypeDef Gimbal_Update(
             0.0f - angles->roll;
 
 
-    /* Apply pitch deadband */
-    if (gimbal->pitch_error_deg > -GIMBAL_PITCH_DEADBAND_DEG &&
-        gimbal->pitch_error_deg <  GIMBAL_PITCH_DEADBAND_DEG)
-    {
-        gimbal->pitch_error_deg = 0.0f;
-    }
+    /* Apply control deadband */
+    gimbal->pitch_error_deg =
+            Gimbal_ApplyDeadband(
+                    gimbal->pitch_error_deg,
+                    GIMBAL_PITCH_DEADBAND_DEG
+            );
+
+    gimbal->roll_error_deg =
+            Gimbal_ApplyDeadband(
+                    gimbal->roll_error_deg,
+                    GIMBAL_ROLL_DEADBAND_DEG
+            );
 
 
-    /* Apply roll deadband */
-    if (gimbal->roll_error_deg > -GIMBAL_ROLL_DEADBAND_DEG &&
-        gimbal->roll_error_deg <  GIMBAL_ROLL_DEADBAND_DEG)
-    {
-        gimbal->roll_error_deg = 0.0f;
-    }
+    /* Update integral state */
+    gimbal->pitch_integral_deg_s =
+            Gimbal_UpdateIntegral(
+                    gimbal->pitch_integral_deg_s,
+                    gimbal->pitch_error_deg,
+                    GIMBAL_PITCH_KI,
+                    angles->dt
+            );
+
+    gimbal->roll_integral_deg_s =
+            Gimbal_UpdateIntegral(
+                    gimbal->roll_integral_deg_s,
+                    gimbal->roll_error_deg,
+                    GIMBAL_ROLL_KI,
+                    angles->dt
+            );
 
 
-    /*
-     * Calculate proportional target commands.
-     * Servo sign accounts for mounting direction.
-     */
-    gimbal->pitch_target_command_deg =
-            gimbal->pitch_error_deg *
+    /* Calculate proportional terms */
+    gimbal->pitch_p_term_deg =
             GIMBAL_PITCH_KP *
+            gimbal->pitch_error_deg;
+
+    gimbal->roll_p_term_deg =
+            GIMBAL_ROLL_KP *
+            gimbal->roll_error_deg;
+
+
+    /* Calculate integral terms */
+    gimbal->pitch_i_term_deg =
+            GIMBAL_PITCH_KI *
+            gimbal->pitch_integral_deg_s;
+
+    gimbal->roll_i_term_deg =
+            GIMBAL_ROLL_KI *
+            gimbal->roll_integral_deg_s;
+
+
+    /* Calculate target commands */
+    pitch_target_command_deg =
+            (
+                gimbal->pitch_p_term_deg +
+                gimbal->pitch_i_term_deg
+            ) *
             GIMBAL_PITCH_SERVO_SIGN;
 
-    gimbal->roll_target_command_deg =
-            gimbal->roll_error_deg *
-            GIMBAL_ROLL_KP *
+    roll_target_command_deg =
+            (
+                gimbal->roll_p_term_deg +
+                gimbal->roll_i_term_deg
+            ) *
             GIMBAL_ROLL_SERVO_SIGN;
 
 
-    /* Limit target commands to safe mechanical range */
-    gimbal->pitch_target_command_deg =
+    /* Clamp target commands */
+    pitch_target_command_deg =
             Gimbal_ClampAngle(
-                    gimbal->pitch_target_command_deg
+                    pitch_target_command_deg
             );
 
-    gimbal->roll_target_command_deg =
+    roll_target_command_deg =
             Gimbal_ClampAngle(
-                    gimbal->roll_target_command_deg
+                    roll_target_command_deg
             );
 
 
-    /* Apply slew rate limit */
+    /* Apply slew rate limits */
     gimbal->pitch_command_deg =
             Gimbal_ApplySlewRate(
                     gimbal->pitch_command_deg,
-                    gimbal->pitch_target_command_deg,
+                    pitch_target_command_deg,
                     GIMBAL_PITCH_MAX_RATE_DPS,
                     angles->dt
             );
@@ -310,7 +389,7 @@ HAL_StatusTypeDef Gimbal_Update(
     gimbal->roll_command_deg =
             Gimbal_ApplySlewRate(
                     gimbal->roll_command_deg,
-                    gimbal->roll_target_command_deg,
+                    roll_target_command_deg,
                     GIMBAL_ROLL_MAX_RATE_DPS,
                     angles->dt
             );

@@ -68,14 +68,21 @@
  * Pitch and roll are kept separate because the two axes
  * have different mechanical loads and geometry.
  */
+//Proportional Integral Derivative (PID) KP = 1, KI = 0, KD = N/A
 #define GIMBAL_PITCH_KP             1.0f
 #define GIMBAL_ROLL_KP              1.0f
+
+//Defines integral contribution ration
+#define GIMBAL_PITCH_KI   0.0f
+#define GIMBAL_ROLL_KI    0.0f
+
 //Defines for deadbands
 #define GIMBAL_PITCH_DEADBAND_DEG 0.5f
 #define GIMBAL_ROLL_DEADBAND_DEG 0.5f
 //Defines for slew rate control
 #define GIMBAL_PITCH_MAX_RATE_DPS   120.0f
 #define GIMBAL_ROLL_MAX_RATE_DPS    120.0f
+
 
 /*
  * Gimbal object containing both servo axes.
@@ -88,8 +95,14 @@ typedef struct
     float pitch_error_deg;
     float roll_error_deg;
 
-    float pitch_target_command_deg;
-    float roll_target_command_deg;
+    float pitch_integral_deg_s;
+    float roll_integral_deg_s;
+
+    float pitch_p_term_deg;
+    float roll_p_term_deg;
+
+    float pitch_i_term_deg;
+    float roll_i_term_deg;
 
     float pitch_command_deg;
     float roll_command_deg;
