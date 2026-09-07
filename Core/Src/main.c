@@ -59,6 +59,9 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
+/* Count TIM6 control ticks */
+static volatile uint32_t control_tick_count = 0U;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -132,6 +135,10 @@ int main(void)
     HAL_StatusTypeDef gimbal_status;
 
     System_Health_t health = {0};
+
+    uint32_t last_control_tick = 0U;
+    uint32_t missed_control_ticks = 0U;
+    uint8_t telemetry_divider = 0U;
 
 
     /* Initialize system health */
@@ -260,7 +267,13 @@ int main(void)
 
         Error_Handler();
     }
+    /* Start 100 Hz control timer */
+    control_tick_count = 0U;
 
+    if (HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+    {
+        Error_Handler();
+    }
 
     /* USER CODE END 2 */
 
@@ -275,60 +288,94 @@ int main(void)
 
         /* USER CODE BEGIN 3 */
 
-        /* Record system sample */
-        SystemHealth_RecordSample(
-                &health
-        );
+        uint32_t tick_snapshot =
+                control_tick_count;
 
 
-        /* Read MPU data */
-        mpu_status = MPU6050_Read_All(
-                &hi2c1,
-                &mpu,
-                &bias
-        );
-
-
-        if (mpu_status == HAL_OK)
+        /* Run control update on new TIM6 tick */
+        if (tick_snapshot != last_control_tick)
         {
-            /* Update delta time */
-            imu_status = IMU_Update_dt(
-                    &angles
+            /*
+             * Record missed control periods instead
+             * of running multiple catch-up updates.
+             */
+            uint32_t elapsed_ticks =
+                    tick_snapshot -
+                    last_control_tick;
+
+            if (elapsed_ticks > 1U)
+            {
+                missed_control_ticks +=
+                        elapsed_ticks - 1U;
+            }
+
+            last_control_tick =
+                    tick_snapshot;
+
+
+            /* Record system sample */
+            SystemHealth_RecordSample(
+                    &health
             );
 
 
-            if (imu_status == HAL_OK)
+            /* Read MPU data */
+            mpu_status = MPU6050_Read_All(
+                    &hi2c1,
+                    &mpu,
+                    &bias
+            );
+
+
+            if (mpu_status == HAL_OK)
             {
-                /* Calculate pitch, roll, and yaw */
-                imu_status = IMU_Calculate_Angles(
-                        &mpu,
+                /* Update delta time */
+                imu_status = IMU_Update_dt(
                         &angles
                 );
 
 
                 if (imu_status == HAL_OK)
                 {
-                    /* Update gimbal */
-                    gimbal_status = Gimbal_Update(
-                            &gimbal,
+                    /* Calculate pitch, roll, and yaw */
+                    imu_status = IMU_Calculate_Angles(
+                            &mpu,
                             &angles
                     );
 
 
-                    if (gimbal_status != HAL_OK)
+                    if (imu_status == HAL_OK)
                     {
-                        Error_Handler();
+                        /* Update gimbal */
+                        gimbal_status = Gimbal_Update(
+                                &gimbal,
+                                &angles
+                        );
+
+
+                        if (gimbal_status != HAL_OK)
+                        {
+                            Error_Handler();
+                        }
+
+
+                        SystemHealth_RecordValidSample(
+                                &health
+                        );
                     }
 
-
-                    SystemHealth_RecordValidSample(
-                            &health
-                    );
+                    else
+                    {
+                        SystemHealth_RecordAngleError(
+                                &health,
+                                imu_status
+                        );
+                    }
                 }
 
                 else
                 {
-                    SystemHealth_RecordAngleError(
+                    SystemHealth_RecordDtError(
                             &health,
                             imu_status
                     );
@@ -337,59 +384,55 @@ int main(void)
 
             else
             {
-                SystemHealth_RecordDtError(
+                SystemHealth_RecordReadError(
                         &health,
-                        imu_status
+                        mpu_status
                 );
             }
-        }
 
-        else
-        {
-            SystemHealth_RecordReadError(
-                    &health,
-                    mpu_status
+
+            /* Update system error rates */
+            SystemHealth_UpdateErrorRates(
+                    &health
             );
+
+
+            /* Update telemetry divider */
+            telemetry_divider++;
+
+
+            /* Send telemetry every fifth control tick */
+            if (telemetry_divider >= 5U)
+            {
+                telemetry_divider = 0U;
+
+
+                tel_status = Telemetry_Send_CSV_DMA(
+                        &huart2,
+                        &mpu,
+                        &angles,
+                        &gimbal,
+                        &health
+                );
+
+
+                /*
+                 * HAL_BUSY only means the previous
+                 * DMA transfer is still active.
+                 */
+                if (tel_status != HAL_OK &&
+                    tel_status != HAL_BUSY)
+                {
+                    SystemHealth_RecordTelemetryError(
+                            &health,
+                            tel_status
+                    );
+                }
+            }
         }
-
-
-        /* Update system error rates */
-        SystemHealth_UpdateErrorRates(
-                &health
-        );
-
-
-        /* Start telemetry DMA transfer */
-        tel_status = Telemetry_Send_CSV_DMA(
-                &huart2,
-                &mpu,
-                &angles,
-                &gimbal,
-                &health
-        );
-
-
-        /*
-         * HAL_BUSY only means the previous DMA
-         * transfer is still active.
-         */
-        if (tel_status != HAL_OK &&
-            tel_status != HAL_BUSY)
-        {
-            SystemHealth_RecordTelemetryError(
-                    &health,
-                    tel_status
-            );
-        }
-
-
-        /*
-         * Temporary loop delay.
-         * Removed when TIM6 becomes the
-         * 100 Hz control scheduler.
-         */
-        HAL_Delay(10);
     }
+
+    /* USER CODE END 3 */
 
     /* USER CODE END 3 */
 }
@@ -473,6 +516,18 @@ void SystemClock_Config(void)
 
 
 /* USER CODE BEGIN 4 */
+
+/*
+ * Record TIM6 control tick.
+ */
+void HAL_TIM_PeriodElapsedCallback(
+        TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM6)
+    {
+        control_tick_count++;
+    }
+}
 
 /*
  * Handle UART DMA transmit completion.
