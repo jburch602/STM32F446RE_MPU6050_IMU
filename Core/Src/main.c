@@ -87,7 +87,6 @@ int main(void)
 
     /* MCU Configuration--------------------------------------------------------*/
 
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
     HAL_Init();
 
     /* USER CODE BEGIN Init */
@@ -95,7 +94,6 @@ int main(void)
     /* USER CODE END Init */
 
 
-    /* Configure the system clock */
     SystemClock_Config();
 
     /* USER CODE BEGIN SysInit */
@@ -104,6 +102,7 @@ int main(void)
 
 
     /* Initialize all configured peripherals */
+
     MX_GPIO_Init();
 
     /* Recover I2C bus before initializing I2C peripheral */
@@ -167,7 +166,9 @@ int main(void)
 
 
     /* Initialize MPU6050 */
-    wake_status = MPU6050_Init(&hi2c1);
+    wake_status = MPU6050_Init(
+            &hi2c1
+    );
 
     if (wake_status != HAL_OK)
     {
@@ -358,8 +359,8 @@ int main(void)
         );
 
 
-        /* Send data over UART */
-        tel_status = Telemetry_Send_CSV(
+        /* Start telemetry DMA transfer */
+        tel_status = Telemetry_Send_CSV_DMA(
                 &huart2,
                 &mpu,
                 &angles,
@@ -368,7 +369,12 @@ int main(void)
         );
 
 
-        if (tel_status != HAL_OK)
+        /*
+         * HAL_BUSY only means the previous DMA
+         * transfer is still active.
+         */
+        if (tel_status != HAL_OK &&
+            tel_status != HAL_BUSY)
         {
             SystemHealth_RecordTelemetryError(
                     &health,
@@ -377,6 +383,11 @@ int main(void)
         }
 
 
+        /*
+         * Temporary loop delay.
+         * Removed when TIM6 becomes the
+         * 100 Hz control scheduler.
+         */
         HAL_Delay(10);
     }
 
@@ -394,7 +405,6 @@ void SystemClock_Config(void)
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
 
-    /* Configure the main internal regulator output voltage */
     __HAL_RCC_PWR_CLK_ENABLE();
 
     __HAL_PWR_VOLTAGESCALING_CONFIG(
@@ -402,7 +412,6 @@ void SystemClock_Config(void)
     );
 
 
-    /* Initialize RCC oscillators */
     RCC_OscInitStruct.OscillatorType =
             RCC_OSCILLATORTYPE_HSI;
 
@@ -435,7 +444,6 @@ void SystemClock_Config(void)
     }
 
 
-    /* Initialize CPU, AHB, and APB clocks */
     RCC_ClkInitStruct.ClockType =
             RCC_CLOCKTYPE_HCLK |
             RCC_CLOCKTYPE_SYSCLK |
@@ -466,6 +474,29 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+/*
+ * Handle UART DMA transmit completion.
+ */
+void HAL_UART_TxCpltCallback(
+        UART_HandleTypeDef *huart)
+{
+    Telemetry_UART_TxCpltCallback(
+            huart
+    );
+}
+
+
+/*
+ * Handle UART DMA errors.
+ */
+void HAL_UART_ErrorCallback(
+        UART_HandleTypeDef *huart)
+{
+    Telemetry_UART_ErrorCallback(
+            huart
+    );
+}
+
 /* USER CODE END 4 */
 
 
@@ -489,10 +520,6 @@ void Error_Handler(void)
 
 #ifdef USE_FULL_ASSERT
 
-/**
- * @brief Reports the name of the source file and the source line number
- * where the assert_param error has occurred.
- */
 void assert_failed(
         uint8_t *file,
         uint32_t line)
