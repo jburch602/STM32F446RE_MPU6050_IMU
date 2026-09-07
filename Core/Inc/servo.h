@@ -41,13 +41,23 @@ typedef struct
 
 
 /*
- * Initializes the servo object and starts PWM
- * at the default center position.
+ * Initializes the servo object.
+ * PWM is not started until Servo_Start() is called.
  */
 HAL_StatusTypeDef Servo_Init(
         Servo_t *servo,
         TIM_HandleTypeDef *htim,
         uint32_t channel
+);
+
+
+/*
+ * Starts PWM output at the requested pulse width.
+ * The pulse is clamped to the configured servo limits.
+ */
+HAL_StatusTypeDef Servo_Start(
+        Servo_t *servo,
+        uint16_t pulse_us
 );
 
 
