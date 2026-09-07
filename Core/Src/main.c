@@ -26,7 +26,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -39,7 +38,8 @@
 #include "telemetry.h"
 #include "system_health.h"
 #include "i2c_manager.h"
-#include "servo.h"
+#include "i2c.h"
+#include "gimbal.h"
 
 /* USER CODE END Includes */
 
@@ -50,9 +50,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#define PITCH_CENTER_US   1530U
-#define ROLL_CENTER_US    1540U
 
 /* USER CODE END PD */
 
@@ -123,17 +120,14 @@ int main(void)
     MPU6050_Data_t mpu = {0};
     MPU6050_Bias_t bias = {0};
     IMU_Angles_t angles = {0};
-
-    Servo_t pitch_servo = {0};
-    Servo_t roll_servo = {0};
+    Gimbal_t gimbal = {0};
 
     HAL_StatusTypeDef wake_status;
     HAL_StatusTypeDef mpu_status;
     HAL_StatusTypeDef imu_status;
     HAL_StatusTypeDef cal_status;
     HAL_StatusTypeDef tel_status;
-    HAL_StatusTypeDef pitch_servo_status;
-    HAL_StatusTypeDef roll_servo_status;
+    HAL_StatusTypeDef gimbal_status;
 
     System_Health_t health = {0};
 
@@ -222,43 +216,18 @@ int main(void)
         Error_Handler();
     }
 
-
-    /* Initialize pitch servo */
-    pitch_servo_status = Servo_Init(
-            &pitch_servo,
+    gimbal_status = Gimbal_Init(
+            &gimbal,
             &htim8,
-            TIM_CHANNEL_2
-    );
-
-    if (pitch_servo_status != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-
-    /* Initialize roll servo */
-    roll_servo_status = Servo_Init(
-            &roll_servo,
+            TIM_CHANNEL_2,
             &htim4,
             TIM_CHANNEL_1
     );
 
-    if (roll_servo_status != HAL_OK)
+    if (gimbal_status != HAL_OK)
     {
         Error_Handler();
     }
-
-
-    /* Set servos to calibrated center positions */
-    Servo_SetPulse(
-            &pitch_servo,
-            PITCH_CENTER_US
-    );
-
-    Servo_SetPulse(
-            &roll_servo,
-            ROLL_CENTER_US
-    );
 
 
     /* USER CODE END 2 */
@@ -300,6 +269,14 @@ int main(void)
 
                 if (imu_status == HAL_OK)
                 {
+                	gimbal_status = Gimbal_Update(
+                	        &gimbal,
+							&angles
+					);
+                	if (gimbal_status != HAL_OK)
+                	{
+                	        Error_Handler();
+                	}
                     SystemHealth_RecordValidSample(&health);
                 }
 
