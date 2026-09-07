@@ -81,22 +81,46 @@ static float Gimbal_ApplySlewRate(
 
 
 /*
- * Updates the integral state.
+ * Updates integral state.
  */
 static float Gimbal_UpdateIntegral(
         float integral_deg_s,
         float error_deg,
         float ki,
+        float control_deg,
+        float output_limit_deg,
         float dt)
 {
-    /* Disable integral state when Ki is zero */
     if (ki <= 0.0f || dt <= 0.0f)
     {
         return 0.0f;
     }
 
+#if GIMBAL_ANTI_WINDUP_ENABLED
+
+    /* Apply conditional integration */
+    if ((control_deg < output_limit_deg &&
+         control_deg > -output_limit_deg) ||
+
+        (control_deg >= output_limit_deg &&
+         error_deg < 0.0f) ||
+
+        (control_deg <= -output_limit_deg &&
+         error_deg > 0.0f))
+    {
+        return integral_deg_s +
+                (error_deg * dt);
+    }
+
+    return integral_deg_s;
+
+#else
+
+    /* Update integral without anti-windup */
     return integral_deg_s +
             (error_deg * dt);
+
+#endif
 }
 
 
@@ -285,6 +309,9 @@ HAL_StatusTypeDef Gimbal_Update(
 
     HAL_StatusTypeDef status;
 
+    float pitch_control_deg;
+    float roll_control_deg;
+
     float pitch_target_command_deg;
     float roll_target_command_deg;
 
@@ -311,24 +338,6 @@ HAL_StatusTypeDef Gimbal_Update(
             );
 
 
-    /* Update integral state */
-    gimbal->pitch_integral_deg_s =
-            Gimbal_UpdateIntegral(
-                    gimbal->pitch_integral_deg_s,
-                    gimbal->pitch_error_deg,
-                    GIMBAL_PITCH_KI,
-                    angles->dt
-            );
-
-    gimbal->roll_integral_deg_s =
-            Gimbal_UpdateIntegral(
-                    gimbal->roll_integral_deg_s,
-                    gimbal->roll_error_deg,
-                    GIMBAL_ROLL_KI,
-                    angles->dt
-            );
-
-
     /* Calculate proportional terms */
     gimbal->pitch_p_term_deg =
             GIMBAL_PITCH_KP *
@@ -339,7 +348,49 @@ HAL_StatusTypeDef Gimbal_Update(
             gimbal->roll_error_deg;
 
 
-    /* Calculate integral terms */
+    /* Calculate current integral terms */
+    gimbal->pitch_i_term_deg =
+            GIMBAL_PITCH_KI *
+            gimbal->pitch_integral_deg_s;
+
+    gimbal->roll_i_term_deg =
+            GIMBAL_ROLL_KI *
+            gimbal->roll_integral_deg_s;
+
+
+    /* Calculate controller outputs */
+    pitch_control_deg =
+            gimbal->pitch_p_term_deg +
+            gimbal->pitch_i_term_deg;
+
+    roll_control_deg =
+            gimbal->roll_p_term_deg +
+            gimbal->roll_i_term_deg;
+
+
+    /* Update integral state */
+    gimbal->pitch_integral_deg_s =
+            Gimbal_UpdateIntegral(
+                    gimbal->pitch_integral_deg_s,
+                    gimbal->pitch_error_deg,
+                    GIMBAL_PITCH_KI,
+                    pitch_control_deg,
+                    GIMBAL_MAX_ANGLE_DEG,
+                    angles->dt
+            );
+
+    gimbal->roll_integral_deg_s =
+            Gimbal_UpdateIntegral(
+                    gimbal->roll_integral_deg_s,
+                    gimbal->roll_error_deg,
+                    GIMBAL_ROLL_KI,
+                    roll_control_deg,
+                    GIMBAL_MAX_ANGLE_DEG,
+                    angles->dt
+            );
+
+
+    /* Update integral terms */
     gimbal->pitch_i_term_deg =
             GIMBAL_PITCH_KI *
             gimbal->pitch_integral_deg_s;

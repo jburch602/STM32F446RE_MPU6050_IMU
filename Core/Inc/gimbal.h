@@ -75,6 +75,8 @@
 //Defines integral contribution ration
 #define GIMBAL_PITCH_KI   0.0f
 #define GIMBAL_ROLL_KI    0.0f
+//Anti-windup Enable = 1
+#define GIMBAL_ANTI_WINDUP_ENABLED  0U
 
 //Defines for deadbands
 #define GIMBAL_PITCH_DEADBAND_DEG 0.5f
