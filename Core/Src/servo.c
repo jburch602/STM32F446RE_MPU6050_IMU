@@ -9,8 +9,7 @@
 
 
 /*
- * Initializes a servo object and starts PWM output
- * at the default center pulse.
+ * Initializes a servo object
  */
 HAL_StatusTypeDef Servo_Init(
         Servo_t *servo,
@@ -29,11 +28,32 @@ HAL_StatusTypeDef Servo_Init(
     servo->pulse_center_us = SERVO_DEFAULT_CENTER_US;
     servo->pulse_max_us = SERVO_DEFAULT_MAX_US;
 
-    /* Set initial PWM pulse to servo center */
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef Servo_Start(
+        Servo_t *servo,
+        uint16_t pulse_us)
+{
+    if (servo == NULL || servo->htim == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    if (pulse_us < servo->pulse_min_us)
+    {
+        pulse_us = servo->pulse_min_us;
+    }
+
+    if (pulse_us > servo->pulse_max_us)
+    {
+        pulse_us = servo->pulse_max_us;
+    }
+
     __HAL_TIM_SET_COMPARE(
             servo->htim,
             servo->channel,
-            servo->pulse_center_us
+            pulse_us
     );
 
     return HAL_TIM_PWM_Start(
@@ -41,8 +61,6 @@ HAL_StatusTypeDef Servo_Init(
             servo->channel
     );
 }
-
-
 /*
  * Sets the servo PWM pulse width in microseconds.
  * The requested pulse is limited to the configured servo range.

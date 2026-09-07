@@ -226,7 +226,7 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 	int64_t gyro_y_sum = 0;
 	int64_t gyro_z_sum = 0;
 
-	while(valid_samples < 2000 && total_samples < 5000){ //WHILE stops after 2000 valid samples or 5000 total samples
+	while(valid_samples < 1000 && total_samples < 5000){ //WHILE stops after 2000 valid samples or 5000 total samples
 
 		HAL_StatusTypeDef status_accel = MPU6050_Read_Accel_Raw(hi2c, &ax, &ay, &az);
 		HAL_StatusTypeDef status_gyro = MPU6050_Read_Gyro_Raw(hi2c, &gx, &gy, &gz);
@@ -248,7 +248,7 @@ HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t 
 		}
 		HAL_Delay(10); //10ms delay
 	}
-	if(valid_samples >= 2000) {
+	if(valid_samples >= 1000) {
 	    // Divide raw sums by valid samples to calculate average bias
 	    bias->accel_x_bias = (int16_t)(accel_x_sum / valid_samples);
 	    bias->accel_y_bias = (int16_t)(accel_y_sum / valid_samples);

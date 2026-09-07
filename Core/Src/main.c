@@ -139,7 +139,19 @@ int main(void)
             HAL_OK,
             &health
     );
+    gimbal_status = Gimbal_Init(
+            &gimbal,
+            &htim8,
+            TIM_CHANNEL_2,
+            &htim4,
+            TIM_CHANNEL_1
+    );
 
+    if (gimbal_status != HAL_OK)
+    {
+        Error_Handler();
+    }
+    HAL_Delay(1000);
 
     /* Initialize MPU6050 */
     wake_status = MPU6050_Init(&hi2c1);
@@ -216,18 +228,7 @@ int main(void)
         Error_Handler();
     }
 
-    gimbal_status = Gimbal_Init(
-            &gimbal,
-            &htim8,
-            TIM_CHANNEL_2,
-            &htim4,
-            TIM_CHANNEL_1
-    );
 
-    if (gimbal_status != HAL_OK)
-    {
-        Error_Handler();
-    }
 
 
     /* USER CODE END 2 */

@@ -70,7 +70,9 @@
  */
 #define GIMBAL_PITCH_KP             1.0f
 #define GIMBAL_ROLL_KP              1.0f
-
+//Defines for deadbands
+#define GIMBAL_PITCH_DEADBAND_DEG 1.0f
+#define GIMBAL_ROLL_DEADBAND_DEG 1.0f
 
 /*
  * Gimbal object containing both servo axes.
