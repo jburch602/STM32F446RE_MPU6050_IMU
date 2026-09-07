@@ -50,7 +50,7 @@ HAL_StatusTypeDef Telemetry_Send_CSV(
         return HAL_ERROR;
     }
 
-    char uart_msg[256]; //character array stores the message
+    char uart_msg[320]; //character array stores the message
 
     int uart_length = 0; //uart_length is a integer that counts the number of bytes in the message
 

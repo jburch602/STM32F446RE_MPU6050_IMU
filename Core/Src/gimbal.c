@@ -43,7 +43,40 @@ static float Gimbal_ApplyDeadband(
 
     return error_deg;
 }
+/*
+ * Limits how quickly a command can change.
+ */
+static float Gimbal_ApplySlewRate(
+        float current_command_deg,
+        float target_command_deg,
+        float max_rate_dps,
+        float dt)
+{
+    if (dt <= 0.0f)
+    {
+        return current_command_deg;
+    }
 
+    float max_step_deg =
+            max_rate_dps * dt;
+
+    float command_change_deg =
+            target_command_deg -
+            current_command_deg;
+
+    if (command_change_deg > max_step_deg)
+    {
+        command_change_deg = max_step_deg;
+    }
+
+    if (command_change_deg < -max_step_deg)
+    {
+        command_change_deg = -max_step_deg;
+    }
+
+    return current_command_deg +
+            command_change_deg;
+}
 
 /*
  * Initializes both gimbal servos, applies their
@@ -135,7 +168,14 @@ HAL_StatusTypeDef Gimbal_Init(
     {
         return status;
     }
+    gimbal->pitch_error_deg = 0.0f;
+    gimbal->roll_error_deg = 0.0f;
 
+    gimbal->pitch_target_command_deg = 0.0f;
+    gimbal->roll_target_command_deg = 0.0f;
+
+    gimbal->pitch_command_deg = 0.0f;
+    gimbal->roll_command_deg = 0.0f;
 
     return HAL_OK;
 }
@@ -190,15 +230,7 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
  * Current controller:
  *   Proportional control
  *   Deadband around level
- *   +/-30 degree mechanical limit
- */
-/*
- * Updates both gimbal axes using the filtered
- * physical pitch and roll angles.
- *
- * Current controller:
- *   Proportional control
- *   Deadband around level
+ *   Slew rate limiting
  *   +/-30 degree mechanical limit
  */
 HAL_StatusTypeDef Gimbal_Update(
@@ -212,10 +244,8 @@ HAL_StatusTypeDef Gimbal_Update(
 
     HAL_StatusTypeDef status;
 
-
     /*
      * Control error = target - measured.
-     *
      * Target orientation is level at 0 degrees.
      */
     gimbal->pitch_error_deg =
@@ -242,33 +272,47 @@ HAL_StatusTypeDef Gimbal_Update(
 
 
     /*
-     * Calculate proportional pitch correction.
-     * Servo sign accounts for mechanical mounting direction.
+     * Calculate proportional target commands.
+     * Servo sign accounts for mounting direction.
      */
-    gimbal->pitch_command_deg =
+    gimbal->pitch_target_command_deg =
             gimbal->pitch_error_deg *
             GIMBAL_PITCH_KP *
             GIMBAL_PITCH_SERVO_SIGN;
 
-
-    /*
-     * Calculate proportional roll correction.
-     */
-    gimbal->roll_command_deg =
+    gimbal->roll_target_command_deg =
             gimbal->roll_error_deg *
             GIMBAL_ROLL_KP *
             GIMBAL_ROLL_SERVO_SIGN;
 
 
-    /* Limit movement to safe mechanical range */
-    gimbal->pitch_command_deg =
+    /* Limit target commands to safe mechanical range */
+    gimbal->pitch_target_command_deg =
             Gimbal_ClampAngle(
-                    gimbal->pitch_command_deg
+                    gimbal->pitch_target_command_deg
+            );
+
+    gimbal->roll_target_command_deg =
+            Gimbal_ClampAngle(
+                    gimbal->roll_target_command_deg
+            );
+
+
+    /* Apply slew rate limit */
+    gimbal->pitch_command_deg =
+            Gimbal_ApplySlewRate(
+                    gimbal->pitch_command_deg,
+                    gimbal->pitch_target_command_deg,
+                    GIMBAL_PITCH_MAX_RATE_DPS,
+                    angles->dt
             );
 
     gimbal->roll_command_deg =
-            Gimbal_ClampAngle(
-                    gimbal->roll_command_deg
+            Gimbal_ApplySlewRate(
+                    gimbal->roll_command_deg,
+                    gimbal->roll_target_command_deg,
+                    GIMBAL_ROLL_MAX_RATE_DPS,
+                    angles->dt
             );
 
 
