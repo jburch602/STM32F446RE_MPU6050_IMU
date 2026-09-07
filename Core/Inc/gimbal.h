@@ -68,13 +68,16 @@
  * Pitch and roll are kept separate because the two axes
  * have different mechanical loads and geometry.
  */
-//Proportional Integral Derivative (PID) KP = 1, KI = 0, KD = N/A
+//Proportional Integral Derivative (PID) KP = 1, KI = 0, KD = 0
 #define GIMBAL_PITCH_KP             1.0f
 #define GIMBAL_ROLL_KP              1.0f
 
-//Defines integral contribution ration
+//Defines integral contribution ratio
 #define GIMBAL_PITCH_KI   0.0f
 #define GIMBAL_ROLL_KI    0.0f
+//Defines derivative contribution ratio
+#define GIMBAL_PITCH_KD 0.0f
+#define GIMBAL_ROLL_KD  0.0f
 //Anti-windup Enable = 1
 #define GIMBAL_ANTI_WINDUP_ENABLED  0U
 
@@ -108,6 +111,16 @@ typedef struct
 
     float pitch_command_deg;
     float roll_command_deg;
+    float pitch_previous_error_deg;
+    float roll_previous_error_deg;
+
+    float pitch_derivative_dps;
+    float roll_derivative_dps;
+
+    float pitch_d_term_deg;
+    float roll_d_term_deg;
+
+    uint8_t derivative_initialized;
 
 } Gimbal_t;
 

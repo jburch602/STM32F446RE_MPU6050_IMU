@@ -9,7 +9,8 @@
 
 
 /*
- * Clamps a gimbal command to the configured range.
+ * Limits a requested gimbal angle to the
+ * configured mechanical range.
  */
 static float Gimbal_ClampAngle(float angle_deg)
 {
@@ -45,7 +46,7 @@ static float Gimbal_ApplyDeadband(
 
 
 /*
- * Limits the rate of command change.
+ * Limits how quickly a command can change.
  */
 static float Gimbal_ApplySlewRate(
         float current_command_deg,
@@ -81,7 +82,8 @@ static float Gimbal_ApplySlewRate(
 
 
 /*
- * Updates integral state.
+ * Updates integral state with optional
+ * conditional anti-windup.
  */
 static float Gimbal_UpdateIntegral(
         float integral_deg_s,
@@ -125,7 +127,26 @@ static float Gimbal_UpdateIntegral(
 
 
 /*
- * Initializes both gimbal axes.
+ * Calculates change in error over time.
+ */
+static float Gimbal_CalculateDerivative(
+        float error_deg,
+        float previous_error_deg,
+        float dt)
+{
+    if (dt <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return (error_deg - previous_error_deg) /
+            dt;
+}
+
+
+/*
+ * Initializes both gimbal servos, applies their
+ * calibrated ranges, and starts PWM at mechanical center.
  */
 HAL_StatusTypeDef Gimbal_Init(
         Gimbal_t *gimbal,
@@ -157,7 +178,7 @@ HAL_StatusTypeDef Gimbal_Init(
     }
 
 
-    /* Apply pitch servo calibration */
+    /* Apply calibrated pitch servo range */
     gimbal->pitch_servo.pulse_min_us =
             GIMBAL_PITCH_MIN_US;
 
@@ -181,7 +202,7 @@ HAL_StatusTypeDef Gimbal_Init(
     }
 
 
-    /* Apply roll servo calibration */
+    /* Apply calibrated roll servo range */
     gimbal->roll_servo.pulse_min_us =
             GIMBAL_ROLL_MIN_US;
 
@@ -192,7 +213,7 @@ HAL_StatusTypeDef Gimbal_Init(
             GIMBAL_ROLL_MAX_US;
 
 
-    /* Start pitch servo at center */
+    /* Start pitch servo at calibrated center */
     status = Servo_Start(
             &gimbal->pitch_servo,
             GIMBAL_PITCH_CENTER_US
@@ -204,7 +225,7 @@ HAL_StatusTypeDef Gimbal_Init(
     }
 
 
-    /* Start roll servo at center */
+    /* Start roll servo at calibrated center */
     status = Servo_Start(
             &gimbal->roll_servo,
             GIMBAL_ROLL_CENTER_US
@@ -216,12 +237,18 @@ HAL_StatusTypeDef Gimbal_Init(
     }
 
 
-    /* Initialize controller state */
+    /* Reset controller state */
     gimbal->pitch_error_deg = 0.0f;
     gimbal->roll_error_deg = 0.0f;
 
     gimbal->pitch_integral_deg_s = 0.0f;
     gimbal->roll_integral_deg_s = 0.0f;
+
+    gimbal->pitch_previous_error_deg = 0.0f;
+    gimbal->roll_previous_error_deg = 0.0f;
+
+    gimbal->pitch_derivative_dps = 0.0f;
+    gimbal->roll_derivative_dps = 0.0f;
 
     gimbal->pitch_p_term_deg = 0.0f;
     gimbal->roll_p_term_deg = 0.0f;
@@ -229,8 +256,13 @@ HAL_StatusTypeDef Gimbal_Init(
     gimbal->pitch_i_term_deg = 0.0f;
     gimbal->roll_i_term_deg = 0.0f;
 
+    gimbal->pitch_d_term_deg = 0.0f;
+    gimbal->roll_d_term_deg = 0.0f;
+
     gimbal->pitch_command_deg = 0.0f;
     gimbal->roll_command_deg = 0.0f;
+
+    gimbal->derivative_initialized = 0U;
 
 
     return HAL_OK;
@@ -238,7 +270,8 @@ HAL_StatusTypeDef Gimbal_Init(
 
 
 /*
- * Centers both gimbal axes.
+ * Moves both gimbal axes to their calibrated
+ * mechanical center positions.
  */
 HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
 {
@@ -281,14 +314,25 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
     gimbal->pitch_integral_deg_s = 0.0f;
     gimbal->roll_integral_deg_s = 0.0f;
 
+    gimbal->pitch_previous_error_deg = 0.0f;
+    gimbal->roll_previous_error_deg = 0.0f;
+
+    gimbal->pitch_derivative_dps = 0.0f;
+    gimbal->roll_derivative_dps = 0.0f;
+
     gimbal->pitch_p_term_deg = 0.0f;
     gimbal->roll_p_term_deg = 0.0f;
 
     gimbal->pitch_i_term_deg = 0.0f;
     gimbal->roll_i_term_deg = 0.0f;
 
+    gimbal->pitch_d_term_deg = 0.0f;
+    gimbal->roll_d_term_deg = 0.0f;
+
     gimbal->pitch_command_deg = 0.0f;
     gimbal->roll_command_deg = 0.0f;
+
+    gimbal->derivative_initialized = 0U;
 
 
     return HAL_OK;
@@ -296,7 +340,8 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
 
 
 /*
- * Updates pitch and roll gimbal commands.
+ * Updates both gimbal axes using the filtered
+ * physical pitch and roll angles.
  */
 HAL_StatusTypeDef Gimbal_Update(
         Gimbal_t *gimbal,
@@ -309,6 +354,9 @@ HAL_StatusTypeDef Gimbal_Update(
 
     HAL_StatusTypeDef status;
 
+    float pitch_raw_error_deg;
+    float roll_raw_error_deg;
+
     float pitch_control_deg;
     float roll_control_deg;
 
@@ -316,24 +364,59 @@ HAL_StatusTypeDef Gimbal_Update(
     float roll_target_command_deg;
 
 
-    /* Calculate control error */
-    gimbal->pitch_error_deg =
+    /* Calculate raw control error */
+    pitch_raw_error_deg =
             0.0f - angles->pitch;
 
-    gimbal->roll_error_deg =
+    roll_raw_error_deg =
             0.0f - angles->roll;
+
+
+    /* Calculate derivative */
+    if (gimbal->derivative_initialized == 0U)
+    {
+        gimbal->pitch_derivative_dps = 0.0f;
+        gimbal->roll_derivative_dps = 0.0f;
+
+        gimbal->derivative_initialized = 1U;
+    }
+
+    else
+    {
+        gimbal->pitch_derivative_dps =
+                Gimbal_CalculateDerivative(
+                        pitch_raw_error_deg,
+                        gimbal->pitch_previous_error_deg,
+                        angles->dt
+                );
+
+        gimbal->roll_derivative_dps =
+                Gimbal_CalculateDerivative(
+                        roll_raw_error_deg,
+                        gimbal->roll_previous_error_deg,
+                        angles->dt
+                );
+    }
+
+
+    /* Store current error for next derivative */
+    gimbal->pitch_previous_error_deg =
+            pitch_raw_error_deg;
+
+    gimbal->roll_previous_error_deg =
+            roll_raw_error_deg;
 
 
     /* Apply control deadband */
     gimbal->pitch_error_deg =
             Gimbal_ApplyDeadband(
-                    gimbal->pitch_error_deg,
+                    pitch_raw_error_deg,
                     GIMBAL_PITCH_DEADBAND_DEG
             );
 
     gimbal->roll_error_deg =
             Gimbal_ApplyDeadband(
-                    gimbal->roll_error_deg,
+                    roll_raw_error_deg,
                     GIMBAL_ROLL_DEADBAND_DEG
             );
 
@@ -358,14 +441,26 @@ HAL_StatusTypeDef Gimbal_Update(
             gimbal->roll_integral_deg_s;
 
 
+    /* Calculate derivative terms */
+    gimbal->pitch_d_term_deg =
+            GIMBAL_PITCH_KD *
+            gimbal->pitch_derivative_dps;
+
+    gimbal->roll_d_term_deg =
+            GIMBAL_ROLL_KD *
+            gimbal->roll_derivative_dps;
+
+
     /* Calculate controller outputs */
     pitch_control_deg =
             gimbal->pitch_p_term_deg +
-            gimbal->pitch_i_term_deg;
+            gimbal->pitch_i_term_deg +
+            gimbal->pitch_d_term_deg;
 
     roll_control_deg =
             gimbal->roll_p_term_deg +
-            gimbal->roll_i_term_deg;
+            gimbal->roll_i_term_deg +
+            gimbal->roll_d_term_deg;
 
 
     /* Update integral state */
@@ -404,14 +499,16 @@ HAL_StatusTypeDef Gimbal_Update(
     pitch_target_command_deg =
             (
                 gimbal->pitch_p_term_deg +
-                gimbal->pitch_i_term_deg
+                gimbal->pitch_i_term_deg +
+                gimbal->pitch_d_term_deg
             ) *
             GIMBAL_PITCH_SERVO_SIGN;
 
     roll_target_command_deg =
             (
                 gimbal->roll_p_term_deg +
-                gimbal->roll_i_term_deg
+                gimbal->roll_i_term_deg +
+                gimbal->roll_d_term_deg
             ) *
             GIMBAL_ROLL_SERVO_SIGN;
 
