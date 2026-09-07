@@ -22,25 +22,23 @@
  */
 /* USER CODE END Header */
 
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
+#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
 #include "mpu6050.h"
 #include "imu_filter.h"
 #include "telemetry.h"
 #include "system_health.h"
 #include "i2c_manager.h"
-#include "i2c.h"
 #include "gimbal.h"
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -89,12 +87,15 @@ int main(void)
 
     /* MCU Configuration--------------------------------------------------------*/
 
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
     HAL_Init();
 
     /* USER CODE BEGIN Init */
 
     /* USER CODE END Init */
 
+
+    /* Configure the system clock */
     SystemClock_Config();
 
     /* USER CODE BEGIN SysInit */
@@ -108,11 +109,13 @@ int main(void)
     /* Recover I2C bus before initializing I2C peripheral */
     I2C_Manager_RecoverI2C1Bus();
 
+    MX_DMA_Init();
     MX_I2C1_Init();
     MX_USART2_UART_Init();
     MX_ADC1_Init();
     MX_TIM8_Init();
     MX_TIM4_Init();
+    MX_TIM6_Init();
 
 
     /* USER CODE BEGIN 2 */
@@ -131,14 +134,21 @@ int main(void)
 
     System_Health_t health = {0};
 
+
+    /* Initialize system health */
     SystemHealth_Init(&health);
 
+
+    /* Send boot status */
     Telemetry_Send_Status(
             &huart2,
             "===== BOOT START =====",
             HAL_OK,
             &health
     );
+
+
+    /* Initialize gimbal */
     gimbal_status = Gimbal_Init(
             &gimbal,
             &htim8,
@@ -151,14 +161,20 @@ int main(void)
     {
         Error_Handler();
     }
+
+
     HAL_Delay(1000);
+
 
     /* Initialize MPU6050 */
     wake_status = MPU6050_Init(&hi2c1);
 
     if (wake_status != HAL_OK)
     {
-        SystemHealth_SetState(&health, SYS_FAULT);
+        SystemHealth_SetState(
+                &health,
+                SYS_FAULT
+        );
 
         Telemetry_Send_Status(
                 &huart2,
@@ -172,7 +188,10 @@ int main(void)
 
 
     /* Calibrate MPU6050 */
-    SystemHealth_SetState(&health, SYS_CALIBRATING);
+    SystemHealth_SetState(
+            &health,
+            SYS_CALIBRATING
+    );
 
     Telemetry_Send_Status(
             &huart2,
@@ -181,6 +200,7 @@ int main(void)
             &health
     );
 
+
     cal_status = MPU6050_Calibrate_All(
             &hi2c1,
             &bias
@@ -188,7 +208,10 @@ int main(void)
 
     if (cal_status != HAL_OK)
     {
-        SystemHealth_SetState(&health, SYS_FAULT);
+        SystemHealth_SetState(
+                &health,
+                SYS_FAULT
+        );
 
         Telemetry_Send_Status(
                 &huart2,
@@ -201,7 +224,11 @@ int main(void)
     }
 
 
-    SystemHealth_SetState(&health, SYS_RUNNING);
+    /* Enter running state */
+    SystemHealth_SetState(
+            &health,
+            SYS_RUNNING
+    );
 
     Telemetry_Send_Status(
             &huart2,
@@ -212,11 +239,16 @@ int main(void)
 
 
     /* Send csv header */
-    tel_status = Telemetry_Send_Header(&huart2);
+    tel_status = Telemetry_Send_Header(
+            &huart2
+    );
 
     if (tel_status != HAL_OK)
     {
-        SystemHealth_SetState(&health, SYS_FAULT);
+        SystemHealth_SetState(
+                &health,
+                SYS_FAULT
+        );
 
         Telemetry_Send_Status(
                 &huart2,
@@ -227,8 +259,6 @@ int main(void)
 
         Error_Handler();
     }
-
-
 
 
     /* USER CODE END 2 */
@@ -242,7 +272,12 @@ int main(void)
         /* USER CODE END WHILE */
 
 
-        SystemHealth_RecordSample(&health);
+        /* USER CODE BEGIN 3 */
+
+        /* Record system sample */
+        SystemHealth_RecordSample(
+                &health
+        );
 
 
         /* Read MPU data */
@@ -256,7 +291,9 @@ int main(void)
         if (mpu_status == HAL_OK)
         {
             /* Update delta time */
-            imu_status = IMU_Update_dt(&angles);
+            imu_status = IMU_Update_dt(
+                    &angles
+            );
 
 
             if (imu_status == HAL_OK)
@@ -270,15 +307,22 @@ int main(void)
 
                 if (imu_status == HAL_OK)
                 {
-                	gimbal_status = Gimbal_Update(
-                	        &gimbal,
-							&angles
-					);
-                	if (gimbal_status != HAL_OK)
-                	{
-                	        Error_Handler();
-                	}
-                    SystemHealth_RecordValidSample(&health);
+                    /* Update gimbal */
+                    gimbal_status = Gimbal_Update(
+                            &gimbal,
+                            &angles
+                    );
+
+
+                    if (gimbal_status != HAL_OK)
+                    {
+                        Error_Handler();
+                    }
+
+
+                    SystemHealth_RecordValidSample(
+                            &health
+                    );
                 }
 
                 else
@@ -309,7 +353,9 @@ int main(void)
 
 
         /* Update system error rates */
-        SystemHealth_UpdateErrorRates(&health);
+        SystemHealth_UpdateErrorRates(
+                &health
+        );
 
 
         /* Send data over UART */
@@ -332,9 +378,6 @@ int main(void)
 
 
         HAL_Delay(10);
-
-
-        /* USER CODE BEGIN 3 */
     }
 
     /* USER CODE END 3 */
@@ -350,12 +393,16 @@ void SystemClock_Config(void)
     RCC_OscInitTypeDef RCC_OscInitStruct = {0};
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+
+    /* Configure the main internal regulator output voltage */
     __HAL_RCC_PWR_CLK_ENABLE();
 
     __HAL_PWR_VOLTAGESCALING_CONFIG(
             PWR_REGULATOR_VOLTAGE_SCALE3
     );
 
+
+    /* Initialize RCC oscillators */
     RCC_OscInitStruct.OscillatorType =
             RCC_OSCILLATORTYPE_HSI;
 
@@ -388,6 +435,7 @@ void SystemClock_Config(void)
     }
 
 
+    /* Initialize CPU, AHB, and APB clocks */
     RCC_ClkInitStruct.ClockType =
             RCC_CLOCKTYPE_HCLK |
             RCC_CLOCKTYPE_SYSCLK |
@@ -443,7 +491,7 @@ void Error_Handler(void)
 
 /**
  * @brief Reports the name of the source file and the source line number
- * where the assert_param error occurred.
+ * where the assert_param error has occurred.
  */
 void assert_failed(
         uint8_t *file,
