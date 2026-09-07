@@ -192,7 +192,7 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
  *   Deadband around level
  *   +/-30 degree mechanical limit
  */
-H/*
+/*
  * Updates both gimbal axes using the filtered
  * physical pitch and roll angles.
  *

@@ -21,6 +21,12 @@ HAL_StatusTypeDef Telemetry_Send_Header(UART_HandleTypeDef *huart);
 HAL_StatusTypeDef Telemetry_Send_Status(UART_HandleTypeDef *huart, const char *msg, HAL_StatusTypeDef status, const System_Health_t *health);
 
 // Formats and sends one CSV row over UART
-HAL_StatusTypeDef Telemetry_Send_CSV(UART_HandleTypeDef *huart, const MPU6050_Data_t *mpu, const IMU_Angles_t *angles, const System_Health_t *health);
+HAL_StatusTypeDef Telemetry_Send_CSV(
+        UART_HandleTypeDef *huart,
+        const MPU6050_Data_t *mpu,
+        const IMU_Angles_t *angles,
+        const Gimbal_t *gimbal,
+        const System_Health_t *health
+);
 
 #endif
