@@ -12,6 +12,7 @@
 #include "mpu6050.h"
 #include "imu_filter.h"
 #include "system_health.h"
+#include "gimbal.h"
 
 // Sends CSV header over UART
 HAL_StatusTypeDef Telemetry_Send_Header(UART_HandleTypeDef *huart);

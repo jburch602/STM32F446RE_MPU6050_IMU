@@ -192,6 +192,15 @@ HAL_StatusTypeDef Gimbal_Center(Gimbal_t *gimbal)
  *   Deadband around level
  *   +/-30 degree mechanical limit
  */
+H/*
+ * Updates both gimbal axes using the filtered
+ * physical pitch and roll angles.
+ *
+ * Current controller:
+ *   Proportional control
+ *   Deadband around level
+ *   +/-30 degree mechanical limit
+ */
 HAL_StatusTypeDef Gimbal_Update(
         Gimbal_t *gimbal,
         const IMU_Angles_t *angles)
@@ -203,43 +212,41 @@ HAL_StatusTypeDef Gimbal_Update(
 
     HAL_StatusTypeDef status;
 
-    float pitch_error_deg;
-    float roll_error_deg;
-
-    float pitch_offset_deg;
-    float roll_offset_deg;
-
 
     /*
      * Control error = target - measured.
      *
      * Target orientation is level at 0 degrees.
      */
-    pitch_error_deg =
+    gimbal->pitch_error_deg =
             0.0f - angles->pitch;
 
-    roll_error_deg =
+    gimbal->roll_error_deg =
             0.0f - angles->roll;
 
 
-    /* Apply deadband around level */
-    pitch_error_deg = Gimbal_ApplyDeadband(
-            pitch_error_deg,
-            GIMBAL_PITCH_DEADBAND_DEG
-    );
+    /* Apply pitch deadband */
+    if (gimbal->pitch_error_deg > -GIMBAL_PITCH_DEADBAND_DEG &&
+        gimbal->pitch_error_deg <  GIMBAL_PITCH_DEADBAND_DEG)
+    {
+        gimbal->pitch_error_deg = 0.0f;
+    }
 
-    roll_error_deg = Gimbal_ApplyDeadband(
-            roll_error_deg,
-            GIMBAL_ROLL_DEADBAND_DEG
-    );
+
+    /* Apply roll deadband */
+    if (gimbal->roll_error_deg > -GIMBAL_ROLL_DEADBAND_DEG &&
+        gimbal->roll_error_deg <  GIMBAL_ROLL_DEADBAND_DEG)
+    {
+        gimbal->roll_error_deg = 0.0f;
+    }
 
 
     /*
      * Calculate proportional pitch correction.
      * Servo sign accounts for mechanical mounting direction.
      */
-    pitch_offset_deg =
-            pitch_error_deg *
+    gimbal->pitch_command_deg =
+            gimbal->pitch_error_deg *
             GIMBAL_PITCH_KP *
             GIMBAL_PITCH_SERVO_SIGN;
 
@@ -247,24 +254,28 @@ HAL_StatusTypeDef Gimbal_Update(
     /*
      * Calculate proportional roll correction.
      */
-    roll_offset_deg =
-            roll_error_deg *
+    gimbal->roll_command_deg =
+            gimbal->roll_error_deg *
             GIMBAL_ROLL_KP *
             GIMBAL_ROLL_SERVO_SIGN;
 
 
     /* Limit movement to safe mechanical range */
-    pitch_offset_deg =
-            Gimbal_ClampAngle(pitch_offset_deg);
+    gimbal->pitch_command_deg =
+            Gimbal_ClampAngle(
+                    gimbal->pitch_command_deg
+            );
 
-    roll_offset_deg =
-            Gimbal_ClampAngle(roll_offset_deg);
+    gimbal->roll_command_deg =
+            Gimbal_ClampAngle(
+                    gimbal->roll_command_deg
+            );
 
 
     /* Update pitch servo */
     status = Servo_SetOffset(
             &gimbal->pitch_servo,
-            pitch_offset_deg
+            gimbal->pitch_command_deg
     );
 
     if (status != HAL_OK)
@@ -276,7 +287,7 @@ HAL_StatusTypeDef Gimbal_Update(
     /* Update roll servo */
     status = Servo_SetOffset(
             &gimbal->roll_servo,
-            roll_offset_deg
+            gimbal->roll_command_deg
     );
 
     if (status != HAL_OK)

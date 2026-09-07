@@ -71,8 +71,8 @@
 #define GIMBAL_PITCH_KP             1.0f
 #define GIMBAL_ROLL_KP              1.0f
 //Defines for deadbands
-#define GIMBAL_PITCH_DEADBAND_DEG 1.0f
-#define GIMBAL_ROLL_DEADBAND_DEG 1.0f
+#define GIMBAL_PITCH_DEADBAND_DEG 0.0f
+#define GIMBAL_ROLL_DEADBAND_DEG 0.0f
 
 /*
  * Gimbal object containing both servo axes.
@@ -81,6 +81,12 @@ typedef struct
 {
     Servo_t pitch_servo;
     Servo_t roll_servo;
+
+    float pitch_error_deg;
+    float roll_error_deg;
+
+    float pitch_command_deg;
+    float roll_command_deg;
 
 } Gimbal_t;
 

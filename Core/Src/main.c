@@ -317,6 +317,7 @@ int main(void)
                 &huart2,
                 &mpu,
                 &angles,
+                &gimbal,
                 &health
         );
 
