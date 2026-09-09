@@ -12,7 +12,7 @@ The project started as an IMU driver and orientation-estimation system, then exp
 
 ## Current Status
 
-V1 is functional and stabilizes pitch and roll. The firmware currently includes:
+The V2 mechanical assembly is built and has completed open-loop actuator/mechanical characterization. The firmware currently includes:
 
 - STM32F446RE firmware written in C using STM32 HAL
 - MPU6050 communication over I2C
@@ -20,8 +20,8 @@ V1 is functional and stabilizes pitch and roll. The firmware currently includes:
 - complementary-filter pitch and roll estimation
 - integrated yaw estimate
 - calibrated two-axis servo control
-- closed-loop proportional stabilization
-- 0.5° control deadband
+- closed-loop proportional stabilization architecture
+- 0.5° control-error deadband
 - servo slew-rate limiting
 - PI and derivative controller architecture with `Ki = 0` and `Kd = 0`
 - conditional anti-windup architecture, currently disabled
@@ -29,8 +29,9 @@ V1 is functional and stabilizes pitch and roll. The firmware currently includes:
 - **20 Hz** CSV telemetry using UART TX DMA at 460800 baud
 - runtime state and error tracking
 - I2C bus recovery for reliable startup after rapid resets
+- V1/V2 servo, backlash, hysteresis, raw-PWM, and cross-axis characterization
 
-The controller is intentionally being kept at P-only behavior on V1 while the mechanical design is characterized. Final PID tuning will be performed after the V2 mechanical redesign.
+The next control milestone is **P-only closed-loop tuning** on V2. Integral and derivative gains remain disabled until proportional behavior is measured on the characterized plant.
 
 ## Control Architecture
 
@@ -101,28 +102,24 @@ Telemetry is decimated to 20 Hz so control timing is independent of serial loggi
 | Telemetry | USART2 TX DMA, 460800 baud |
 | IMU interface | I2C1 |
 
-Empirically calibrated servo pulse ranges:
-
-| Axis | Minimum | Center | Maximum |
-|---|---:|---:|---:|
-| Pitch | 500 µs | 1530 µs | 2500 µs |
-| Roll | 500 µs | 1540 µs | 2500 µs |
+Servo center values are empirically calibrated in firmware for the current mechanical revision. The tested PWM operating range is approximately **500–2500 µs**; center values are intentionally kept in the servo/gimbal configuration rather than treated as universal 1500 µs constants.
 
 ## Mechanical Characterization
 
-V1 testing exposed limitations that are mechanical rather than purely control-software problems.
+V1 and V2 testing show that the MG90S servo + gearbox + linkage system has **direction-dependent, history-dependent hysteresis**, not one clean symmetric deadband.
 
-Near-center step tests using commands from ±0.25° through ±2.0° showed **direction-dependent hysteresis and breakaway behavior**. Small corrections do not produce a consistent platform response in both directions, which can contribute to near-zero wobble or limit cycling.
+The strongest V2 results include:
 
-The main V1 mechanical limitation is the link between the lower servo and upper stage. The servo horn does not sit flush against the printed control arm, causing:
+- same-command pitch branch gaps up to **2.336°** in a staircase hysteresis test
+- repeated pitch -1.0° commands producing **+1.843°, +0.020°, and -0.008°** incremental responses
+- raw-PWM breakaway that changes with direction and prior mechanical state
+- approximately **0.77–0.87** platform-angle gain for ±20° servo commands rather than a 1:1 command-to-platform relationship
+- relatively low cross-axis coupling of roughly **3–5%**
+- intermittent servo/mechanical shaking that can occur even with the outer gimbal controller bypassed
 
-- approximately 5–10° of static upper-stage lean
-- compliance at the horn/control-arm interface
-- rocking during direction reversals
-- asymmetric loading from gravity
-- additional apparent backlash beyond the servo gear train itself
+These measurements indicate that gearbox backlash, servo internal behavior, static friction, gravity loading, and linkage compliance currently dominate near-center precision more than cross-axis coupling.
 
-Because of this, V1 is being used as a firmware and system-characterization platform rather than as the final tuning target.
+Detailed methodology, raw-data references, and the current control implications are documented in [`docs/validation/hysteresis.md`](docs/validation/hysteresis.md).
 
 ## Validation Results
 
@@ -134,19 +131,26 @@ The project is validated with logged telemetry rather than visual observation al
 | Telemetry | 20 Hz UART TX DMA with zero observed telemetry errors in validated runs |
 | Deadband | 0.5° deadband reduced in-band pitch/roll command RMS to 0° and suppressed 100% of in-band commands |
 | Slew limiter | Aggressive reversals reached the configured 120°/s ceiling on both axes without exceeding it |
-| Mechanical characterization | Direction-dependent near-center hysteresis identified in the V1 servo/linkage assembly |
+| V2 staircase hysteresis | Maximum same-command branch gap measured at **2.336° pitch** and **0.482° roll** |
+| Repeatability | Identical small servo commands can produce substantially different physical motion depending on mechanical history |
+| Cross-axis coupling | Approximately **3–5%**, lower than same-axis hysteresis effects |
+| ±20° static step | Platform motion is approximately **0.77–0.87×** the servo command magnitude |
 
-Detailed workbooks, plots, methodology, and interpretation are available in [`docs/validation`](docs/validation/README.md).
+Detailed controller-validation workbooks are in [`docs/validation`](docs/validation/README.md). The consolidated V1/V2 actuator characterization is in [`docs/validation/hysteresis.md`](docs/validation/hysteresis.md), with raw telemetry in [`servo_hysteresis_characterization_v1_v2.xlsx`](docs/validation/spreadsheets/servo_hysteresis_characterization_v1_v2.xlsx).
 
-## V2 Mechanical Goals
+## V2 Mechanical Revision
 
-The next revision will focus on reducing mechanical uncertainty before tuning integral and derivative gains:
+V2 was built to reduce the largest V1 structural uncertainty and provide a cleaner platform for control tuning. The redesign improved the mechanical assembly enough to support repeatable characterization, but the MG90S actuator/linkage system still shows measurable hysteresis and directional asymmetry.
 
-- recess the servo horn into a flat locating pocket
-- create a rigid, flush horn-to-link interface
-- reduce direction-dependent play and compliance
-- repeat near-center response testing
-- tune `Ki` and `Kd` only after mechanical improvements are validated
+Current control decision:
+
+1. retain the existing 0.5° orientation-error deadband
+2. keep `Ki = 0` and `Kd = 0`
+3. tune proportional gain on V2
+4. only add minimum-actuation / breakaway compensation if P-only data shows the servo repeatedly stalls outside the error deadband
+5. tune integral and derivative action after proportional behavior is understood
+
+A conventional fixed **3° motor-output deadband is not currently used**, because the measured actuator behavior is not one fixed symmetric threshold.
 
 ## Firmware Organization
 
@@ -171,7 +175,7 @@ Several implementation details were added specifically from observed failures or
 - Control scheduling is timer-driven rather than paced by `HAL_Delay()`.
 - Measured `dt` is retained in the filter/controller even with deterministic scheduling.
 - Missed scheduler periods are not replayed as fake catch-up sensor samples.
-- Mechanical step testing is logged through the same IMU and telemetry path used during closed-loop operation.
+- Mechanical step, raw-PWM, and hysteresis testing are logged through the same IMU and telemetry path used during closed-loop operation.
 
 Validated 100 Hz test captures showed:
 
@@ -212,11 +216,12 @@ ReadErrPct,TotalErrPct
 - system health/error instrumentation
 - hardware/software debugging
 - quantitative mechanical characterization
+- open-loop actuator characterization and hysteresis analysis
 
 ## Next Steps
 
-1. Redesign the V1 inter-axis servo/control-arm interface.
-2. Build and validate the V2 mechanical assembly.
-3. Repeat backlash/hysteresis and step-response measurements.
-4. Tune P, I, and D gains on the mechanically improved platform.
-5. Compare V1 and V2 stabilization performance quantitatively.
+1. Tune **P-only** closed-loop stabilization on V2 with `Ki = 0` and `Kd = 0`.
+2. Quantify rise time, settling behavior, steady-state error, and near-zero limit cycling.
+3. Add direction-specific minimum-actuation / breakaway compensation only if P-only data justifies it.
+4. Tune integral and derivative gains after proportional behavior is stable and understood.
+5. Re-evaluate the MG90S actuator choice if servo hunting/backlash remains the dominant performance limit.
