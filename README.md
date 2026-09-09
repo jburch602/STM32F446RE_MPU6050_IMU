@@ -142,6 +142,14 @@ Detailed controller-validation workbooks are in [`docs/validation`](docs/validat
 
 V2 was built to reduce the largest V1 structural uncertainty and provide a cleaner platform for control tuning. The redesign improved the mechanical assembly enough to support repeatable characterization, but the MG90S actuator/linkage system still shows measurable hysteresis and directional asymmetry.
 
+<p align="center">
+  <img src="docs/images/v2_gimbal_prototype.jpg" width="520" alt="V2 two-axis STM32 MPU6050 gimbal prototype">
+</p>
+
+<p align="center"><em>V2 mechanical assembly after the upper-stage redesign.</em></p>
+
+Compared with V1, the upper stage is substantially more centered and the servo-horn/control-arm interface is much stiffer. A small residual static lean of roughly **1–3°** remains, but visible structural flex has been greatly reduced. This makes the remaining near-center error easier to attribute to the MG90S servos, gearbox backlash, stiction, and load asymmetry rather than gross frame compliance. The residual static bias can be handled separately through mechanical alignment or center calibration; the measured hysteresis cannot be removed by a simple center offset.
+
 Current control decision:
 
 1. retain the existing 0.5° orientation-error deadband
