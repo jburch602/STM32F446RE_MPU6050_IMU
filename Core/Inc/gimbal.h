@@ -24,12 +24,12 @@
 
 /* Pitch servo - TIM8_CH2 */
 #define GIMBAL_PITCH_MIN_US        500U
-#define GIMBAL_PITCH_CENTER_US    1530U
+#define GIMBAL_PITCH_CENTER_US    1400U
 #define GIMBAL_PITCH_MAX_US       2500U
 
 /* Roll servo - TIM4_CH1 */
 #define GIMBAL_ROLL_MIN_US         500U
-#define GIMBAL_ROLL_CENTER_US     1540U
+#define GIMBAL_ROLL_CENTER_US     1550U
 #define GIMBAL_ROLL_MAX_US        2500U
 
 
@@ -68,23 +68,21 @@
  * Pitch and roll are kept separate because the two axes
  * have different mechanical loads and geometry.
  */
-//Proportional Integral Derivative (PID) KP = 1, KI = 0, KD = 0
-#define GIMBAL_PITCH_KP             1.0f
-#define GIMBAL_ROLL_KP              1.0f
+/* Pitch disabled for isolated roll test */
+#define GIMBAL_PITCH_KP             0.0f
+#define GIMBAL_PITCH_KI             0.0f
+#define GIMBAL_PITCH_KD             0.0f
 
-//Defines integral contribution ratio
-#define GIMBAL_PITCH_KI   0.0f
-#define GIMBAL_ROLL_KI    0.0f
-//Defines derivative contribution ratio
-#define GIMBAL_PITCH_KD 0.0f
-#define GIMBAL_ROLL_KD  0.0f
-//Anti-windup Enable = 1
-#define GIMBAL_ANTI_WINDUP_ENABLED  0U
+/* Exploratory roll PID */
+#define GIMBAL_ROLL_KP              0.90f
+#define GIMBAL_ROLL_KI              0.05f
+#define GIMBAL_ROLL_KD              0.00f
 
-//Defines for deadbands
-#define GIMBAL_PITCH_DEADBAND_DEG 0.5f
-#define GIMBAL_ROLL_DEADBAND_DEG 0.5f
-//Defines for slew rate control
+#define GIMBAL_ANTI_WINDUP_ENABLED  1U
+
+#define GIMBAL_PITCH_DEADBAND_DEG   0.5f
+#define GIMBAL_ROLL_DEADBAND_DEG    0.5f
+
 #define GIMBAL_PITCH_MAX_RATE_DPS   120.0f
 #define GIMBAL_ROLL_MAX_RATE_DPS    120.0f
 
