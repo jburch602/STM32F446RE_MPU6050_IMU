@@ -1,268 +1,701 @@
+/*
+ * mpu6050.c
+ *
+ * MPU6050 6-axis IMU driver.
+ *
+ * Configuration:
+ *   Accelerometer: +/-2 g
+ *   Gyroscope:     +/-1000 deg/s
+ *
+ * Calibration:
+ *   Accelerometer:
+ *     Permanent per-axis offset and scale correction derived from a
+ *     multi-orientation static calibration.
+ *
+ *   Gyroscope:
+ *     Zero-rate bias measured at startup while the sensor is stationary.
+ *
+ * This separates intrinsic sensor calibration from attitude reference.
+ * Startup orientation is never treated as accelerometer bias.
+ */
+
 #include "mpu6050.h"
-#include <math.h>
-// Defines
-
-#define MPU6050_ADDR (0x68 << 1)
-// MPU6050 7-bit address is 0x68.
-// STM32 HAL expects the address shifted left by 1.
-
-#define MPU6050_WHO_AM_I_REG 0x75
-// Internal WHO_AM_I register for the MPU6050.
-
-#define MPU6050_EXPECTED_ID 0x68
-// The MPU6050 should respond with this after a WHO_AM_I read.
-#define MPU6050_PWR_MGMT_1_REG 0x6B
-// This is the registry of the sleep/wake state
-#define MPU6050_ACCEL_XOUT_H_REG 0x3B
-// This is the registry of the first accelerometer byte
-#define MPU6050_GYRO_XOUT_H_REG 0x43
-// This is the registry of the first gyroscope byte
-
-//The scale factors are both in their highest sensitivity modes for now
-#define MPU6050_ACCEL_SCALE_FACTOR 16384.0f
-// This is the factor to convert raw accel data to physical units (+/-)2g
-#define MPU6050_GYRO_SCALE_FACTOR 131.0f
-// This is the factor to convert raw gyro data to physical units (+/-)250 degrees per second
-#define MPU6050_CALIBRATION_SAMPLES 2000
 
 
-// Static function prototypes
-static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
-                                               uint8_t reg,
-                                               uint8_t *data,
-                                               uint16_t length);
+/* --------------------------------------------------------------------------
+ * Device address
+ * -------------------------------------------------------------------------- */
 
-static HAL_StatusTypeDef MPU6050_Write_Register(I2C_HandleTypeDef *hi2c,
-                                                uint8_t reg,
-                                                uint8_t data);
+#define MPU6050_ADDR                         (0x68U << 1)
 
-//Init and read gyro/accel functions
 
-HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c)
+/* --------------------------------------------------------------------------
+ * Register addresses
+ * -------------------------------------------------------------------------- */
+
+#define MPU6050_WHO_AM_I_REG                 0x75U
+#define MPU6050_PWR_MGMT_1_REG               0x6BU
+
+#define MPU6050_GYRO_CONFIG_REG              0x1BU
+#define MPU6050_ACCEL_CONFIG_REG             0x1CU
+
+#define MPU6050_ACCEL_XOUT_H_REG             0x3BU
+#define MPU6050_GYRO_XOUT_H_REG              0x43U
+
+#define MPU6050_EXPECTED_ID                  0x68U
+
+
+/* --------------------------------------------------------------------------
+ * Full-scale configuration
+ * -------------------------------------------------------------------------- */
+
+/*
+ * AFS_SEL = 0
+ *
+ * Accelerometer range: +/-2 g
+ * Nominal sensitivity: 16384 counts/g
+ */
+#define MPU6050_ACCEL_CONFIG_VALUE           0x00U
+#define MPU6050_ACCEL_NOMINAL_COUNTS_PER_G   16384.0f
+
+
+/*
+ * FS_SEL = 2
+ *
+ * Gyroscope range: +/-1000 deg/s
+ * Sensitivity:     32.8 counts/(deg/s)
+ */
+#define MPU6050_GYRO_CONFIG_VALUE            0x10U
+#define MPU6050_GYRO_SCALE_FACTOR            32.8f
+
+
+/* --------------------------------------------------------------------------
+ * Permanent accelerometer calibration
+ * --------------------------------------------------------------------------
+ *
+ * Derived from the 30-position arbitrary-orientation calibration.
+ *
+ * Each axis is corrected using:
+ *
+ *              raw - offset
+ *   accel_g =  ------------
+ *              counts/g
+ *
+ * These constants characterize the accelerometer itself and are not
+ * dependent on gimbal orientation at startup.
+ */
+
+#define MPU6050_ACCEL_X_OFFSET_RAW            822.561f
+#define MPU6050_ACCEL_Y_OFFSET_RAW           -220.519f
+#define MPU6050_ACCEL_Z_OFFSET_RAW           1642.138f
+
+#define MPU6050_ACCEL_X_COUNTS_PER_G        16397.160f
+#define MPU6050_ACCEL_Y_COUNTS_PER_G        16388.686f
+#define MPU6050_ACCEL_Z_COUNTS_PER_G        16586.842f
+
+
+/* --------------------------------------------------------------------------
+ * Gyroscope startup calibration
+ * -------------------------------------------------------------------------- */
+
+#define MPU6050_GYRO_CALIBRATION_SAMPLES       1000U
+#define MPU6050_GYRO_CALIBRATION_MAX_ATTEMPTS  5000U
+#define MPU6050_GYRO_CALIBRATION_DELAY_MS         2U
+
+
+/* --------------------------------------------------------------------------
+ * Private function prototypes
+ * -------------------------------------------------------------------------- */
+
+static HAL_StatusTypeDef MPU6050_Read_Register(
+        I2C_HandleTypeDef *hi2c,
+        uint8_t reg,
+        uint8_t *data,
+        uint16_t length
+);
+
+
+static HAL_StatusTypeDef MPU6050_Write_Register(
+        I2C_HandleTypeDef *hi2c,
+        uint8_t reg,
+        uint8_t data
+);
+
+
+/* --------------------------------------------------------------------------
+ * Register access
+ * -------------------------------------------------------------------------- */
+
+static HAL_StatusTypeDef MPU6050_Read_Register(
+        I2C_HandleTypeDef *hi2c,
+        uint8_t reg,
+        uint8_t *data,
+        uint16_t length)
 {
-    uint8_t who_am_i = 0; // Initialize and declare one byte to hold value read from 0x75
-
-    // Read 0x75 to confirm MPU6050 is responding correctly
-    HAL_StatusTypeDef status = MPU6050_Read_Register(
-        hi2c,                  // Pointer to the I2C peripheral handle
-        MPU6050_WHO_AM_I_REG,  // Internal register of the MPU6050, 0x75
-        &who_am_i,             // Store the byte read into who_am_i
-        1                      // Read only one byte
-    );
-
-    if (status != HAL_OK) // If status is not HAL_OK, the I2C/HAL transaction failed
+    if (hi2c == NULL ||
+        data == NULL ||
+        length == 0U)
     {
-        return status; // Return the status
+        return HAL_ERROR;
     }
 
-    if (who_am_i != MPU6050_EXPECTED_ID) // If who_am_i is not 0x68, unexpected device ID
-    {
-        return HAL_ERROR; //Return HAL_ERROR
-    }
-    //Write to reg 0x6B to equal 0x00. This clears the sleep mode bit
-    status = MPU6050_Write_Register(hi2c, MPU6050_PWR_MGMT_1_REG, 0x00);
-
-    if (status != HAL_OK) // IF status is not HAL_OK, the I2C/HAL transaction failed
-       {
-           return status; // Return the status
-       }
-    return HAL_OK; // Return HAL_OK, the mpu is awake and has the correct address
-}
-HAL_StatusTypeDef MPU6050_Read_Accel_Raw(I2C_HandleTypeDef *hi2c, int16_t *accel_x, int16_t *accel_y, int16_t *accel_z){ //function returns a HAL status and combines the 6 bytes from the accelerometer into 3 signed 16 bit integers
-
-	if (hi2c == NULL || accel_x == NULL || accel_y == NULL || accel_z == NULL){ //IF any of the needed pointers are NULL
-			return HAL_ERROR; //Return HAL_ERROR
-		}
-	uint8_t data[6]; //unsigned int array data holds 6, 8 bit values
-
-	HAL_StatusTypeDef status = MPU6050_Read_Register(hi2c, MPU6050_ACCEL_XOUT_H_REG, data, 6); //reads the 6 bytes starting at the address of MPU6050_ACCEL_XOUT_H_REG
-
-
-	if (status != HAL_OK) // IF status is not HAL_OK, the I2C/HAL transaction failed
-	    {
-	        return status; // Return the status
-	    }
-
-	//so these line shifts take data from the high byte and shift it left 8 bits "<< 8"
-	//and then combine the low byte by using bitwise OR operator " | "
-	//then it places that 16 bit value in the the value of the pointers address
-	*accel_x = (int16_t)(data[0] << 8 | data[1]);
-	*accel_y = (int16_t)(data[2] << 8 | data[3]);
-	*accel_z = (int16_t)(data[4] << 8 | data[5]);
-
-	return HAL_OK; // Return HAL_OK, successful I2C read and raw value collection
-}
-HAL_StatusTypeDef MPU6050_Read_Gyro_Raw(I2C_HandleTypeDef *hi2c, int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z){ //function returns a HAL status and combines the 6 bytes from the gyroscope into 3 signed 16 bit integers
-
-	if (hi2c == NULL || gyro_x == NULL || gyro_y == NULL || gyro_z == NULL){ //IF any of the needed pointers are NULL
-			return HAL_ERROR; //Return HAL_ERROR
-		}
-	uint8_t data[6]; //unsigned int array data holds 6, 8 bit values
-
-	HAL_StatusTypeDef status = MPU6050_Read_Register(hi2c, MPU6050_GYRO_XOUT_H_REG, data, 6); //reads the 6 bytes starting at the address of MPU6050_GYRO_XOUT_H_REG
-
-
-	if (status != HAL_OK) // IF status is not HAL_OK, the I2C/HAL transaction failed
-	    {
-	        return status; // Return the status
-	    }
-
-	//so these line shifts take data from the high byte and shift it left 8 bits "<< 8"
-	//and then combine the low byte by using bitwise OR operator " | "
-	//then it places that 16 bit value in the the value of the pointers address
-	*gyro_x = (int16_t)(data[0] << 8 | data[1]);
-	*gyro_y = (int16_t)(data[2] << 8 | data[3]);
-	*gyro_z = (int16_t)(data[4] << 8 | data[5]);
-
-	return HAL_OK; // Return HAL_OK, does not validate data
-}
-
-// Static helper functions
-
-static HAL_StatusTypeDef MPU6050_Read_Register(I2C_HandleTypeDef *hi2c,
-                                               uint8_t reg,
-                                               uint8_t *data,
-                                               uint16_t length)
-{
     return HAL_I2C_Mem_Read(
-        hi2c,                 // Pointer to I2C peripheral handle
-        MPU6050_ADDR,         // MPU6050 I2C address in STM32 HAL format
-        reg,                  // Internal MPU6050 register address
-        I2C_MEMADD_SIZE_8BIT, // Register address size is 8 bits
-        data,                 // Location to store read data
-        length,               // Number of bytes to read
-        100                   // Timeout in ms
+            hi2c,
+            MPU6050_ADDR,
+            reg,
+            I2C_MEMADD_SIZE_8BIT,
+            data,
+            length,
+            100U
     );
 }
 
-static HAL_StatusTypeDef MPU6050_Write_Register(I2C_HandleTypeDef *hi2c,
-                                                uint8_t reg,
-                                                uint8_t data)
+
+static HAL_StatusTypeDef MPU6050_Write_Register(
+        I2C_HandleTypeDef *hi2c,
+        uint8_t reg,
+        uint8_t data)
 {
+    if (hi2c == NULL)
+    {
+        return HAL_ERROR;
+    }
+
     return HAL_I2C_Mem_Write(
-        hi2c,                 // Pointer to I2C peripheral handle
-        MPU6050_ADDR,         // MPU6050 I2C address in STM32 HAL format
-        reg,                  // Internal MPU6050 register address
-        I2C_MEMADD_SIZE_8BIT, // Register address size is 8 bits
-        &data,                // Address of byte to write
-        1,                    // Write one byte
-        100                   // Timeout in ms
+            hi2c,
+            MPU6050_ADDR,
+            reg,
+            I2C_MEMADD_SIZE_8BIT,
+            &data,
+            1U,
+            100U
     );
 }
 
-//Unit conversion with scale factor
 
-//Uses accel scale factor to convert raw units to physical units
-float MPU6050_Convert_Accel_To_Grav(int16_t raw_accel_data){
-	return raw_accel_data / MPU6050_ACCEL_SCALE_FACTOR;
+/* --------------------------------------------------------------------------
+ * Initialization
+ * -------------------------------------------------------------------------- */
+
+HAL_StatusTypeDef MPU6050_Init(
+        I2C_HandleTypeDef *hi2c)
+{
+    if (hi2c == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+
+    HAL_StatusTypeDef status;
+    uint8_t register_value = 0U;
+
+
+    /* Verify that the expected MPU6050 is present on the I2C bus. */
+    status = MPU6050_Read_Register(
+            hi2c,
+            MPU6050_WHO_AM_I_REG,
+            &register_value,
+            1U
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    if (register_value != MPU6050_EXPECTED_ID)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* Wake the device from sleep mode. */
+    status = MPU6050_Write_Register(
+            hi2c,
+            MPU6050_PWR_MGMT_1_REG,
+            0x00U
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    HAL_Delay(100U);
+
+
+    /* Configure accelerometer full-scale range to +/-2 g. */
+    status = MPU6050_Write_Register(
+            hi2c,
+            MPU6050_ACCEL_CONFIG_REG,
+            MPU6050_ACCEL_CONFIG_VALUE
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+
+    /*
+     * Verify AFS_SEL bits [4:3].
+     *
+     * Reading the configuration back catches failed or incomplete writes
+     * before sensor data is interpreted using the wrong scale factor.
+     */
+    status = MPU6050_Read_Register(
+            hi2c,
+            MPU6050_ACCEL_CONFIG_REG,
+            &register_value,
+            1U
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    if ((register_value & 0x18U) !=
+        MPU6050_ACCEL_CONFIG_VALUE)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* Configure gyroscope full-scale range to +/-1000 deg/s. */
+    status = MPU6050_Write_Register(
+            hi2c,
+            MPU6050_GYRO_CONFIG_REG,
+            MPU6050_GYRO_CONFIG_VALUE
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+
+    /* Verify FS_SEL bits [4:3]. */
+    status = MPU6050_Read_Register(
+            hi2c,
+            MPU6050_GYRO_CONFIG_REG,
+            &register_value,
+            1U
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    if ((register_value & 0x18U) !=
+        MPU6050_GYRO_CONFIG_VALUE)
+    {
+        return HAL_ERROR;
+    }
+
+
+    return HAL_OK;
 }
 
-//Uses gyro scale factor to convert raw units to physical units
-float MPU6050_Convert_Gyro_To_Deg(int16_t raw_gyro_data){
-	return raw_gyro_data / MPU6050_GYRO_SCALE_FACTOR;
+
+/* --------------------------------------------------------------------------
+ * Raw sensor reads
+ * -------------------------------------------------------------------------- */
+
+HAL_StatusTypeDef MPU6050_Read_Accel_Raw(
+        I2C_HandleTypeDef *hi2c,
+        int16_t *accel_x,
+        int16_t *accel_y,
+        int16_t *accel_z)
+{
+    if (hi2c == NULL ||
+        accel_x == NULL ||
+        accel_y == NULL ||
+        accel_z == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+
+    uint8_t data[6];
+
+
+    HAL_StatusTypeDef status =
+            MPU6050_Read_Register(
+                    hi2c,
+                    MPU6050_ACCEL_XOUT_H_REG,
+                    data,
+                    6U
+            );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+
+    /*
+     * MPU6050 output registers store each signed 16-bit measurement
+     * in big-endian format: high byte followed by low byte.
+     */
+    *accel_x =
+            (int16_t)(
+                ((uint16_t)data[0] << 8) |
+                data[1]
+            );
+
+    *accel_y =
+            (int16_t)(
+                ((uint16_t)data[2] << 8) |
+                data[3]
+            );
+
+    *accel_z =
+            (int16_t)(
+                ((uint16_t)data[4] << 8) |
+                data[5]
+            );
+
+
+    return HAL_OK;
 }
 
-//Read all function takes raw reads and converts using calibrated data
 
-HAL_StatusTypeDef MPU6050_Read_All(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *data, const MPU6050_Bias_t *bias){
-	if (hi2c == NULL || data == NULL || bias == NULL){ //IF needed pointers are NULL
-		return HAL_ERROR; //Return HAL_Error
-	}
-	HAL_StatusTypeDef status; //Make HAL status for function
+HAL_StatusTypeDef MPU6050_Read_Gyro_Raw(
+        I2C_HandleTypeDef *hi2c,
+        int16_t *gyro_x,
+        int16_t *gyro_y,
+        int16_t *gyro_z)
+{
+    if (hi2c == NULL ||
+        gyro_x == NULL ||
+        gyro_y == NULL ||
+        gyro_z == NULL)
+    {
+        return HAL_ERROR;
+    }
 
-	status = MPU6050_Read_Accel_Raw(hi2c, &data->accel_x_raw, &data->accel_y_raw, &data->accel_z_raw); //Reads raw data and stores in struct MPU6050_Data_t
-	if (status != HAL_OK){ //IF status is not ok
-		return status; //Return status
-	}
-	status = MPU6050_Read_Gyro_Raw(hi2c, &data->gyro_x_raw, &data->gyro_y_raw, &data->gyro_z_raw);
-	if (status != HAL_OK){ //IF status is not ok
-			return status; //Return status
-		}
-	//Initialize and calculate the calibrated variables
-	int16_t accel_x_calibrated = data->accel_x_raw - bias->accel_x_bias;
-	int16_t accel_y_calibrated = data->accel_y_raw - bias->accel_y_bias;
-	int16_t accel_z_calibrated = data->accel_z_raw - bias->accel_z_bias;
 
-	int16_t gyro_x_calibrated = data->gyro_x_raw - bias->gyro_x_bias;
-	int16_t gyro_y_calibrated = data->gyro_y_raw - bias->gyro_y_bias;
-	int16_t gyro_z_calibrated = data->gyro_z_raw - bias->gyro_z_bias;
+    uint8_t data[6];
 
-	//Convert the raw accel data into G units and stores at the address from the struct variables in MPU6050_Data_t
-	data->accel_x_g = MPU6050_Convert_Accel_To_Grav(accel_x_calibrated);
-	data->accel_y_g = MPU6050_Convert_Accel_To_Grav(accel_y_calibrated);
-	data->accel_z_g = MPU6050_Convert_Accel_To_Grav(accel_z_calibrated);
-	//Convert the raw gyro data into DPS units and stores at the address from the struct variables in MPU6050_Data_t
-	data->gyro_x_dps = MPU6050_Convert_Gyro_To_Deg(gyro_x_calibrated);
-	data->gyro_y_dps = MPU6050_Convert_Gyro_To_Deg(gyro_y_calibrated);
-	data->gyro_z_dps = MPU6050_Convert_Gyro_To_Deg(gyro_z_calibrated);
 
-	return HAL_OK; //Return HAL_OK at this step means data was read and converted
+    HAL_StatusTypeDef status =
+            MPU6050_Read_Register(
+                    hi2c,
+                    MPU6050_GYRO_XOUT_H_REG,
+                    data,
+                    6U
+            );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+
+    *gyro_x =
+            (int16_t)(
+                ((uint16_t)data[0] << 8) |
+                data[1]
+            );
+
+    *gyro_y =
+            (int16_t)(
+                ((uint16_t)data[2] << 8) |
+                data[3]
+            );
+
+    *gyro_z =
+            (int16_t)(
+                ((uint16_t)data[4] << 8) |
+                data[5]
+            );
+
+
+    return HAL_OK;
 }
 
-//Calibration function calculates the average bias to subtract
-HAL_StatusTypeDef MPU6050_Calibrate_All(I2C_HandleTypeDef *hi2c, MPU6050_Bias_t *bias){
 
-	if (hi2c == NULL || bias == NULL)
-	{
-		return HAL_ERROR;
-	}
+/* --------------------------------------------------------------------------
+ * Unit conversion
+ * -------------------------------------------------------------------------- */
 
-	uint16_t valid_samples = 0;
-	uint16_t total_samples = 0;
+/*
+ * Convert raw accelerometer counts using the nominal +/-2 g sensitivity.
+ *
+ * This function is retained for compatibility and diagnostics. Production
+ * accelerometer values returned by MPU6050_Read_All() use the measured
+ * per-axis offset and scale constants instead.
+ */
+float MPU6050_Convert_Accel_To_Grav(
+        int16_t raw_accel_data)
+{
+    return (float)raw_accel_data /
+            MPU6050_ACCEL_NOMINAL_COUNTS_PER_G;
+}
 
-	int16_t ax = 0;
-	int16_t ay = 0;
-	int16_t az = 0;
 
-	int16_t gx = 0;
-	int16_t gy = 0;
-	int16_t gz = 0;
+/*
+ * Convert bias-corrected gyro counts to degrees per second.
+ */
+float MPU6050_Convert_Gyro_To_Deg(
+        int32_t calibrated_gyro_data)
+{
+    return (float)calibrated_gyro_data /
+            MPU6050_GYRO_SCALE_FACTOR;
+}
 
-	int64_t accel_x_sum = 0;
-	int64_t accel_y_sum = 0;
-	int64_t accel_z_sum = 0;
 
-	int64_t gyro_x_sum = 0;
-	int64_t gyro_y_sum = 0;
-	int64_t gyro_z_sum = 0;
+/* --------------------------------------------------------------------------
+ * Calibrated sensor read
+ * -------------------------------------------------------------------------- */
 
-	while(valid_samples < 1000 && total_samples < 5000){ //WHILE stops after 2000 valid samples or 5000 total samples
+HAL_StatusTypeDef MPU6050_Read_All(
+        I2C_HandleTypeDef *hi2c,
+        MPU6050_Data_t *data,
+        const MPU6050_Bias_t *bias)
+{
+    if (hi2c == NULL ||
+        data == NULL ||
+        bias == NULL)
+    {
+        return HAL_ERROR;
+    }
 
-		HAL_StatusTypeDef status_accel = MPU6050_Read_Accel_Raw(hi2c, &ax, &ay, &az);
-		HAL_StatusTypeDef status_gyro = MPU6050_Read_Gyro_Raw(hi2c, &gx, &gy, &gz);
 
-		total_samples++; //Plus one total sample
+    HAL_StatusTypeDef status;
 
-		if (status_accel == HAL_OK && status_gyro == HAL_OK){ //IF status is ok
 
-			//Adds raw reads to sum
-			accel_x_sum += ax;
-			accel_y_sum += ay;
-			accel_z_sum += az;
+    status = MPU6050_Read_Accel_Raw(
+            hi2c,
+            &data->accel_x_raw,
+            &data->accel_y_raw,
+            &data->accel_z_raw
+    );
 
-			gyro_x_sum += gx;
-			gyro_y_sum += gy;
-			gyro_z_sum += gz;
+    if (status != HAL_OK)
+    {
+        return status;
+    }
 
-			valid_samples++; //Plus one valid sample
-		}
-		HAL_Delay(10); //10ms delay
-	}
-	if(valid_samples >= 1000) {
-	    // Divide raw sums by valid samples to calculate average bias
-	    bias->accel_x_bias = (int16_t)(accel_x_sum / valid_samples);
-	    bias->accel_y_bias = (int16_t)(accel_y_sum / valid_samples);
 
-	    // Assumes sensor is flat/still with Z axis reading +1g
-	    bias->accel_z_bias = (int16_t)((accel_z_sum / valid_samples) - MPU6050_ACCEL_SCALE_FACTOR);
+    status = MPU6050_Read_Gyro_Raw(
+            hi2c,
+            &data->gyro_x_raw,
+            &data->gyro_y_raw,
+            &data->gyro_z_raw
+    );
 
-	    bias->gyro_x_bias = (int16_t)(gyro_x_sum / valid_samples);
-	    bias->gyro_y_bias = (int16_t)(gyro_y_sum / valid_samples);
-	    bias->gyro_z_bias = (int16_t)(gyro_z_sum / valid_samples);
+    if (status != HAL_OK)
+    {
+        return status;
+    }
 
-	    return HAL_OK; //Collected 2000 valid samples and calculated bias, HAL_OK
-	}
-	else{
-		return HAL_ERROR; //Failed to calibrate, HAL_ERROR
-	}
+
+    /*
+     * Apply permanent accelerometer calibration.
+     *
+     * Unlike the previous startup calibration method, these corrections
+     * represent intrinsic sensor offset and scale error rather than the
+     * gravity vector present when the system was powered on.
+     */
+    data->accel_x_g =
+            (
+                (float)data->accel_x_raw -
+                MPU6050_ACCEL_X_OFFSET_RAW
+            )
+            /
+            MPU6050_ACCEL_X_COUNTS_PER_G;
+
+
+    data->accel_y_g =
+            (
+                (float)data->accel_y_raw -
+                MPU6050_ACCEL_Y_OFFSET_RAW
+            )
+            /
+            MPU6050_ACCEL_Y_COUNTS_PER_G;
+
+
+    data->accel_z_g =
+            (
+                (float)data->accel_z_raw -
+                MPU6050_ACCEL_Z_OFFSET_RAW
+            )
+            /
+            MPU6050_ACCEL_Z_COUNTS_PER_G;
+
+
+    /*
+     * Remove startup zero-rate gyro bias before converting to deg/s.
+     *
+     * The intermediate values are int32_t because subtracting two int16_t
+     * values can mathematically exceed the int16_t range.
+     */
+    int32_t gyro_x_calibrated =
+            (int32_t)data->gyro_x_raw -
+            (int32_t)bias->gyro_x_bias;
+
+    int32_t gyro_y_calibrated =
+            (int32_t)data->gyro_y_raw -
+            (int32_t)bias->gyro_y_bias;
+
+    int32_t gyro_z_calibrated =
+            (int32_t)data->gyro_z_raw -
+            (int32_t)bias->gyro_z_bias;
+
+
+    data->gyro_x_dps =
+            MPU6050_Convert_Gyro_To_Deg(
+                    gyro_x_calibrated
+            );
+
+    data->gyro_y_dps =
+            MPU6050_Convert_Gyro_To_Deg(
+                    gyro_y_calibrated
+            );
+
+    data->gyro_z_dps =
+            MPU6050_Convert_Gyro_To_Deg(
+                    gyro_z_calibrated
+            );
+
+
+    return HAL_OK;
+}
+
+
+/* --------------------------------------------------------------------------
+ * Gyroscope calibration
+ * -------------------------------------------------------------------------- */
+
+/*
+ * Determine zero-rate gyro bias by averaging stationary raw measurements.
+ *
+ * Orientation does not matter because a stationary gyroscope should report
+ * zero angular velocity regardless of the direction of gravity.
+ *
+ * Accelerometer runtime bias fields are explicitly cleared because
+ * accelerometer calibration is handled by the permanent offset/scale
+ * constants above.
+ */
+HAL_StatusTypeDef MPU6050_Calibrate_Gyro(
+        I2C_HandleTypeDef *hi2c,
+        MPU6050_Bias_t *bias)
+{
+    if (hi2c == NULL ||
+        bias == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+
+    bias->accel_x_bias = 0;
+    bias->accel_y_bias = 0;
+    bias->accel_z_bias = 0;
+
+
+    int64_t gyro_x_sum = 0;
+    int64_t gyro_y_sum = 0;
+    int64_t gyro_z_sum = 0;
+
+    uint32_t valid_samples = 0U;
+    uint32_t total_attempts = 0U;
+
+    int16_t gyro_x = 0;
+    int16_t gyro_y = 0;
+    int16_t gyro_z = 0;
+
+
+    /*
+     * Continue until the requested number of successful readings has been
+     * collected or the retry limit is reached.
+     */
+    while (
+        valid_samples <
+            MPU6050_GYRO_CALIBRATION_SAMPLES
+        &&
+        total_attempts <
+            MPU6050_GYRO_CALIBRATION_MAX_ATTEMPTS
+    )
+    {
+        HAL_StatusTypeDef status =
+                MPU6050_Read_Gyro_Raw(
+                        hi2c,
+                        &gyro_x,
+                        &gyro_y,
+                        &gyro_z
+                );
+
+
+        total_attempts++;
+
+
+        if (status == HAL_OK)
+        {
+            gyro_x_sum +=
+                    (int64_t)gyro_x;
+
+            gyro_y_sum +=
+                    (int64_t)gyro_y;
+
+            gyro_z_sum +=
+                    (int64_t)gyro_z;
+
+            valid_samples++;
+        }
+
+
+        HAL_Delay(
+                MPU6050_GYRO_CALIBRATION_DELAY_MS
+        );
+    }
+
+
+    if (valid_samples <
+        MPU6050_GYRO_CALIBRATION_SAMPLES)
+    {
+        return HAL_ERROR;
+    }
+
+
+    bias->gyro_x_bias =
+            (int16_t)(
+                gyro_x_sum /
+                (int64_t)valid_samples
+            );
+
+    bias->gyro_y_bias =
+            (int16_t)(
+                gyro_y_sum /
+                (int64_t)valid_samples
+            );
+
+    bias->gyro_z_bias =
+            (int16_t)(
+                gyro_z_sum /
+                (int64_t)valid_samples
+            );
+
+
+    return HAL_OK;
+}
+
+
+/*
+ * Backward-compatible calibration entry point.
+ *
+ * Historical application code calls MPU6050_Calibrate_All(). Keeping the
+ * function avoids unnecessary changes elsewhere while enforcing the new
+ * calibration architecture: only gyro bias is estimated at startup.
+ */
+HAL_StatusTypeDef MPU6050_Calibrate_All(
+        I2C_HandleTypeDef *hi2c,
+        MPU6050_Bias_t *bias)
+{
+    return MPU6050_Calibrate_Gyro(
+            hi2c,
+            bias
+    );
 }
