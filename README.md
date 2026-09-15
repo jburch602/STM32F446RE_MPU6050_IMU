@@ -10,13 +10,9 @@ Closed-loop stabilization project built in embedded C with an STM32F446RE, MPU60
 
 ## Demo
 
-<p align="center">
-  <a href="https://github.com/jburch602/STM32F446RE_MPU6050_IMU/releases/tag/v0.2-closed-loop-demo">
-    <img src="docs/images/v2_closed_loop_demo_thumbnail.jpg" width="560" alt="V2 closed-loop stabilization demo">
-  </a>
-</p>
+Current V2 prototype running startup-relative two-axis stabilization.
 
-<p align="center"><em>Click the image for the video and source revision used in the September 14, 2026 demo.</em></p>
+[https://github.com/user-attachments/assets/YOUR-VIDEO-ID](https://github.com/user-attachments/assets/4cda6c70-4782-4603-9b97-95a0b9cd7fd2)
 
 ## Current Status
 
